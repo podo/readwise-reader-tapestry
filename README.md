@@ -23,11 +23,13 @@ bundle.
 - Original-site author icons, cached by domain with tiny-icon filtering
 - Optional unseen-only initial import
 - Incremental synchronization after the initial 25, 50, or 100-item import
+- Lossless incremental pagination with configuration-aware checkpoints
 
 The initial limit is not a permanent timeline limit. Later refreshes request
-only new or updated Reader documents and can paginate through up to 500 items
-per refresh. A five-minute overlap protects against delayed items; Tapestry
-deduplicates them by URL.
+only new or updated Reader documents. Refreshes process up to 500 items at a
+time and retain Reader's cursor when more remain, so the next refresh resumes
+without advancing the synchronization window. A five-minute overlap protects
+against delayed items; Tapestry deduplicates them by URL.
 
 The connector is read-only. It never changes seen state or document location in
 Reader.

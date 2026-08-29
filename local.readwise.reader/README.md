@@ -24,6 +24,12 @@ header. It is not included in the connector bundle.
 Tapestry uses each document's original-site icon as its author avatar when a
 suitable icon is available. Icons are cached by site, and URLs that explicitly
 advertise a tiny 16–48 pixel raster are ignored to avoid visibly soft avatars.
+The cache refreshes icons after 30 days.
+
+Incremental synchronization retains Reader's pagination cursor when a large
+update cannot be completed in one refresh. Changing a feed filter starts a new
+initial import for that configuration instead of reusing an incompatible sync
+timestamp.
 
 The connector is intentionally read-only. Reading or saving an item in Tapestry
 does not mark it seen, move it, archive it, or otherwise modify Reader.

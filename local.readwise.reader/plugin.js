@@ -1,12 +1,13 @@
 // local.readwise.reader
 
 const apiBase = "https://readwise.io/api/v3/list/";
-const syncKey = "lastSuccessfulSync";
+const syncStateKey = "syncStateV2";
 const overlapMilliseconds = 5 * 60 * 1000;
 const maximumIncrementalPages = 5;
 const siteIconCacheKey = "siteIconCacheV1";
 const siteIconCacheLimit = 200;
 const siteIconLookupConcurrency = 4;
+const siteIconCacheTtlMilliseconds = 30 * 24 * 60 * 60 * 1000;
 
 function verify() {
   verifyAsync().then(processVerification).catch(processError);
@@ -33,22 +34,28 @@ async function loadAsync() {
   validateToken();
 
   const requestStartedAt = new Date();
-  const lastSync = getItem(syncKey);
-  const isInitialImport = !lastSync;
+  const signature = currentSyncSignature();
+  let syncState = readSyncState();
+  if (syncState.signature !== signature) {
+    syncState = newSyncState(signature);
+  }
+
+  const isInitialImport = !syncState.updatedAfter && !syncState.pageCursor;
+  const windowStartedAt = syncState.windowStartedAt || requestStartedAt.toISOString();
   const limit = normalizedBatchSize();
   const includeFullContent = normalizedChoice(content_detail) === "full article";
   const documents = [];
 
-  let pageCursor = null;
+  let pageCursor = syncState.pageCursor || null;
   let pageCount = 0;
 
   do {
-    const query = buildQuery(lastSync, limit, includeFullContent, pageCursor);
+    const query = buildQuery(syncState.updatedAfter, limit, includeFullContent, pageCursor);
     const response = await readerRequest(`${apiBase}?${query}`);
     const page = parseDocumentResponse(response);
 
     for (const document of page.results) {
-      if (isTopLevelDocument(document) && shouldIncludeDocument(document)) {
+      if (isTopLevelDocument(document) && !document.is_deleted && shouldIncludeDocument(document)) {
         documents.push(document);
       }
     }
@@ -61,18 +68,83 @@ async function loadAsync() {
   } while (!isInitialImport && pageCursor && pageCount < maximumIncrementalPages);
 
   const siteIcons = await resolveSiteIcons(documents);
-  const nextSync = new Date(requestStartedAt.getTime() - overlapMilliseconds);
-  setItem(syncKey, nextSync.toISOString());
+  if (!isInitialImport && pageCursor) {
+    writeSyncState({
+      signature,
+      updatedAfter: syncState.updatedAfter,
+      pageCursor,
+      windowStartedAt
+    });
+  }
+  else {
+    const completedWindow = new Date(windowStartedAt);
+    const nextSync = new Date(completedWindow.getTime() - overlapMilliseconds);
+    writeSyncState({
+      signature,
+      updatedAfter: nextSync.toISOString(),
+      pageCursor: null,
+      windowStartedAt: null
+    });
+  }
 
   return documents.map(document => documentToItem(document, siteIcons));
 }
 
-function readerRequest(url) {
+async function readerRequest(url) {
   const headers = {
     "Authorization": `Token ${api_token.trim()}`,
     "Accept": "application/json"
   };
-  return sendRequest(url, "GET", null, headers);
+  let text;
+  try {
+    text = await sendRequest(url, "GET", null, headers, true);
+  }
+  catch (error) {
+    throw normalizedReaderError(error);
+  }
+
+  try {
+    const response = JSON.parse(text);
+    if (response && typeof response.status === "number" && Object.prototype.hasOwnProperty.call(response, "body")) {
+      if (response.status >= 400) throw readerStatusError(response.status, response.headers);
+      return typeof response.body === "string" ? response.body : JSON.stringify(response.body);
+    }
+  }
+  catch (error) {
+    if (error && error.readerApiError) throw error;
+  }
+
+  return text;
+}
+
+function readerStatusError(status, headers) {
+  let message = `Reader returned HTTP ${status}.`;
+  if (status === 401 || status === 403) {
+    message = "Reader rejected the API token. Create a fresh token at readwise.io/access_token.";
+  }
+  else if (status === 429) {
+    const retryAfter = headerValue(headers, "retry-after");
+    message = retryAfter
+      ? `Reader rate limit reached. Try again in ${retryAfter} seconds.`
+      : "Reader rate limit reached. Try again shortly.";
+  }
+
+  const error = new Error(message);
+  error.readerApiError = true;
+  return error;
+}
+
+function normalizedReaderError(error) {
+  const message = error && error.message ? error.message : String(error);
+  if (/\b(401|403)\b/.test(message)) return readerStatusError(401);
+  if (/\b429\b/.test(message)) return readerStatusError(429);
+  return error instanceof Error ? error : new Error(message);
+}
+
+function headerValue(headers, name) {
+  if (!headers || typeof headers !== "object") return null;
+  const key = Object.keys(headers).find(candidate => candidate.toLowerCase() === name.toLowerCase());
+  return key ? String(headers[key]) : null;
 }
 
 function buildQuery(updatedAfter, limit, includeFullContent, pageCursor) {
@@ -138,7 +210,7 @@ async function resolveSiteIcons(documents) {
 
   for (const document of documents) {
     const origin = normalizedWebOrigin(document.source_url);
-    if (origin && !Object.prototype.hasOwnProperty.call(cache, origin)) {
+    if (origin && !isCurrentSiteIconEntry(cache[origin])) {
       pagesByOrigin[origin] = document.source_url;
     }
   }
@@ -174,9 +246,16 @@ async function resolveSiteIcons(documents) {
 
   const icons = {};
   for (const [origin, entry] of Object.entries(cache)) {
-    if (entry && entry.url) icons[origin] = entry.url;
+    if (isCurrentSiteIconEntry(entry) && entry.url) icons[origin] = entry.url;
   }
   return icons;
+}
+
+function isCurrentSiteIconEntry(entry) {
+  if (!entry || !entry.checkedAt) return false;
+  const checkedAt = new Date(entry.checkedAt);
+  return !Number.isNaN(checkedAt.getTime())
+    && Date.now() - checkedAt.getTime() < siteIconCacheTtlMilliseconds;
 }
 
 function normalizedWebOrigin(value) {
@@ -258,12 +337,9 @@ function documentBody(document, originalUrl) {
 }
 
 function documentDate(document) {
-  const candidates = [
-    document.saved_at,
-    document.created_at,
-    document.updated_at,
-    document.published_date
-  ];
+  const candidates = normalizedLocation() === "feed"
+    ? [document.published_date, document.created_at, document.saved_at, document.updated_at]
+    : [document.saved_at, document.created_at, document.published_date, document.updated_at];
 
   for (const candidate of candidates) {
     if (!candidate) continue;
@@ -272,6 +348,43 @@ function documentDate(document) {
   }
 
   return new Date();
+}
+
+function currentSyncSignature() {
+  return JSON.stringify({
+    location: normalizedLocation(),
+    category: normalizedCategory(),
+    content: normalizedChoice(content_detail),
+    target: normalizedChoice(open_target),
+    unseen: only_unseen === "on",
+    batchSize: normalizedBatchSize()
+  });
+}
+
+function newSyncState(signature) {
+  return {
+    signature,
+    updatedAfter: null,
+    pageCursor: null,
+    windowStartedAt: null
+  };
+}
+
+function readSyncState() {
+  const stored = getItem(syncStateKey);
+  if (!stored) return newSyncState(null);
+
+  try {
+    const parsed = JSON.parse(stored);
+    return parsed && typeof parsed === "object" ? parsed : newSyncState(null);
+  }
+  catch (error) {
+    return newSyncState(null);
+  }
+}
+
+function writeSyncState(state) {
+  setItem(syncStateKey, JSON.stringify(state));
 }
 
 function isTopLevelDocument(document) {
