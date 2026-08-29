@@ -4,6 +4,9 @@ const apiBase = "https://readwise.io/api/v3/list/";
 const syncKey = "lastSuccessfulSync";
 const overlapMilliseconds = 5 * 60 * 1000;
 const maximumIncrementalPages = 5;
+const siteIconCacheKey = "siteIconCacheV1";
+const siteIconCacheLimit = 200;
+const siteIconLookupConcurrency = 4;
 
 function verify() {
   verifyAsync().then(processVerification).catch(processError);
@@ -57,10 +60,11 @@ async function loadAsync() {
     // Incremental refreshes paginate to avoid dropping bursts of new content.
   } while (!isInitialImport && pageCursor && pageCount < maximumIncrementalPages);
 
+  const siteIcons = await resolveSiteIcons(documents);
   const nextSync = new Date(requestStartedAt.getTime() - overlapMilliseconds);
   setItem(syncKey, nextSync.toISOString());
 
-  return documents.map(documentToItem);
+  return documents.map(document => documentToItem(document, siteIcons));
 }
 
 function readerRequest(url) {
@@ -96,7 +100,7 @@ function parseDocumentResponse(text) {
   return json;
 }
 
-function documentToItem(document) {
+function documentToItem(document, siteIcons) {
   const readerUrl = document.url || `https://read.readwise.io/read/${encodeURIComponent(document.id)}`;
   const originalUrl = document.source_url || readerUrl;
   const openOriginal = normalizedChoice(open_target) === "original website";
@@ -109,6 +113,9 @@ function documentToItem(document) {
   const identityName = document.site_name || document.author || "Readwise Reader";
   const identity = Identity.createWithName(identityName);
   identity.uri = originalUrl;
+  const siteOrigin = normalizedWebOrigin(document.source_url);
+  const siteIcon = siteOrigin && siteIcons ? siteIcons[siteOrigin] : null;
+  if (siteIcon) identity.avatar = siteIcon;
   if (document.author && document.author !== identityName) {
     identity.username = document.author;
   }
@@ -123,6 +130,106 @@ function documentToItem(document) {
   }
 
   return item;
+}
+
+async function resolveSiteIcons(documents) {
+  const cache = readSiteIconCache();
+  const pagesByOrigin = {};
+
+  for (const document of documents) {
+    const origin = normalizedWebOrigin(document.source_url);
+    if (origin && !Object.prototype.hasOwnProperty.call(cache, origin)) {
+      pagesByOrigin[origin] = document.source_url;
+    }
+  }
+
+  const queue = Object.entries(pagesByOrigin);
+  const workerCount = Math.min(siteIconLookupConcurrency, queue.length);
+  const workers = [];
+
+  for (let index = 0; index < workerCount; index += 1) {
+    workers.push((async () => {
+      while (queue.length > 0) {
+        const [origin, pageUrl] = queue.shift();
+        let icon = null;
+
+        try {
+          const candidate = await lookupIcon(pageUrl);
+          if (isAcceptableSiteIcon(candidate)) icon = candidate;
+        }
+        catch (error) {
+          // A missing or unreachable icon must never prevent timeline loading.
+        }
+
+        cache[origin] = {
+          url: icon,
+          checkedAt: new Date().toISOString()
+        };
+      }
+    })());
+  }
+
+  await Promise.all(workers);
+  writeSiteIconCache(cache);
+
+  const icons = {};
+  for (const [origin, entry] of Object.entries(cache)) {
+    if (entry && entry.url) icons[origin] = entry.url;
+  }
+  return icons;
+}
+
+function normalizedWebOrigin(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.origin;
+  }
+  catch (error) {
+    return null;
+  }
+}
+
+function isAcceptableSiteIcon(value) {
+  if (typeof value !== "string" || !value.trim()) return false;
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:" && url.protocol !== "data:") {
+      return false;
+    }
+  }
+  catch (error) {
+    return false;
+  }
+
+  // Reject icons whose URL explicitly advertises a raster size too small for
+  // a Retina avatar. Unknown and multi-resolution ICO sizes are left to
+  // Tapestry's native icon resolver.
+  const lower = value.toLowerCase();
+  return !/(?:^|[^0-9])(16|24|32|48)(?:x\1)?(?:[^0-9]|$)/.test(lower);
+}
+
+function readSiteIconCache() {
+  const stored = getItem(siteIconCacheKey);
+  if (!stored) return {};
+
+  try {
+    const parsed = JSON.parse(stored);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  }
+  catch (error) {
+    return {};
+  }
+}
+
+function writeSiteIconCache(cache) {
+  const entries = Object.entries(cache)
+    .sort((left, right) => String(right[1].checkedAt).localeCompare(String(left[1].checkedAt)))
+    .slice(0, siteIconCacheLimit);
+  setItem(siteIconCacheKey, JSON.stringify(Object.fromEntries(entries)));
 }
 
 function documentBody(document, originalUrl) {

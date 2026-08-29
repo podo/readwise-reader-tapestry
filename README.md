@@ -20,6 +20,7 @@ bundle.
 - Optional Article, Email, RSS, PDF, EPUB, Tweet, or Video filtering
 - Summary or full-article display
 - Open items in Reader or on the original website
+- Original-site author icons, cached by domain with tiny-icon filtering
 - Optional unseen-only initial import
 - Incremental synchronization after the initial 25, 50, or 100-item import
 

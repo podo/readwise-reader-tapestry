@@ -59,6 +59,11 @@ function makeContext(overrides = {}) {
     processError: error => { context.error = error; },
     getItem: key => state.get(key) || null,
     setItem: (key, value) => state.set(key, value),
+    lookupIcon: async url => {
+      context.iconLookupCount = (context.iconLookupCount || 0) + 1;
+      context.lastIconLookup = url;
+      return "https://example.com/apple-touch-icon-180x180.png";
+    },
     Item: {
       createWithUriDate: (uri, date) => ({ uri, date })
     },
@@ -98,11 +103,27 @@ async function run() {
   assert.match(context.results[0].body, /&lt;unsafe&gt;/);
   assert.doesNotMatch(context.results[0].body, /<unsafe>/);
   assert.match(context.results[0].annotations[0].text, /RSS/);
+  assert.strictEqual(
+    context.results[0].author.avatar,
+    "https://example.com/apple-touch-icon-180x180.png"
+  );
+  assert.strictEqual(context.iconLookupCount, 1);
+
+  vm.runInContext("load()", context);
+  await settle();
+  assert.strictEqual(context.iconLookupCount, 1, "site icons should be cached by origin");
 
   const originalContext = makeContext({ open_target: "Original Website" });
   vm.runInContext("load()", originalContext);
   await settle();
   assert.strictEqual(originalContext.results[0].uri, "https://example.com/article");
+
+  const tinyIconContext = makeContext({
+    lookupIcon: async () => "https://example.com/favicon-32x32.png"
+  });
+  vm.runInContext("load()", tinyIconContext);
+  await settle();
+  assert.strictEqual(tinyIconContext.results[0].author.avatar, undefined);
 
   const missingToken = makeContext({ api_token: "" });
   vm.runInContext("verify()", missingToken);

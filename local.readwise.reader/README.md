@@ -21,6 +21,10 @@ header. It is not included in the connector bundle.
 - **Import Only Unseen** filters out documents already opened in Reader at import time.
 - **Initial Item Limit** controls the first import. Later refreshes are incremental.
 
+Tapestry uses each document's original-site icon as its author avatar when a
+suitable icon is available. Icons are cached by site, and URLs that explicitly
+advertise a tiny 16–48 pixel raster are ignored to avoid visibly soft avatars.
+
 The connector is intentionally read-only. Reading or saving an item in Tapestry
 does not mark it seen, move it, archive it, or otherwise modify Reader.
 
