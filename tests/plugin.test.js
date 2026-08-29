@@ -25,6 +25,10 @@ function makeContext(overrides = {}) {
         location: "feed",
         site_name: "Example",
         reading_time: "4 mins",
+        reading_progress: 0.42,
+        word_count: 1234,
+        tags: { research: "Research", ai: "AI" },
+        notes: "Remember <this> & revisit.",
         summary: "Summary with <unsafe> markup & symbols.",
         image_url: "https://example.com/cover.jpg",
         parent_id: null,
@@ -50,6 +54,10 @@ function makeContext(overrides = {}) {
     content_detail: "Summary",
     open_target: "Reader",
     only_unseen: "off",
+    required_tags: "",
+    metadata_detail: "Rich",
+    show_tags: "on",
+    show_notes: "off",
     batch_size: "50",
     sendRequest: async (url, method, parameters, headers) => {
       context.lastRequest = { url, method, parameters, headers };
@@ -74,6 +82,9 @@ function makeContext(overrides = {}) {
     },
     Annotation: {
       createWithText: text => ({ text })
+    },
+    LinkAttachment: {
+      createWithUrl: url => ({ url })
     },
     ...overrides
   };
@@ -106,6 +117,11 @@ async function run() {
   assert.match(context.results[0].body, /&lt;unsafe&gt;/);
   assert.doesNotMatch(context.results[0].body, /<unsafe>/);
   assert.match(context.results[0].annotations[0].text, /RSS/);
+  assert.match(context.results[0].annotations[0].text, /42% read/);
+  assert.match(context.results[0].annotations[0].text, /1,234 words/);
+  assert.strictEqual(context.results[0].annotations[1].text, "Tags: Research, AI");
+  assert.strictEqual(context.results[0].attachments[0].url, "https://example.com/article");
+  assert.strictEqual(context.results[0].attachments[0].image, "https://example.com/cover.jpg");
   assert.strictEqual(
     context.results[0].author.avatar,
     "https://example.com/apple-touch-icon-180x180.png"
@@ -132,6 +148,18 @@ async function run() {
   vm.runInContext("load()", tinyIconContext);
   await settle();
   assert.strictEqual(tinyIconContext.results[0].author.avatar, undefined);
+
+  const richContext = makeContext({
+    required_tags: "research, ai, later, deep, fifth, ignored",
+    show_notes: "on"
+  });
+  vm.runInContext("load()", richContext);
+  await settle();
+  assert.match(richContext.lastRequest.url, /tag=research/);
+  assert.match(richContext.lastRequest.url, /tag=ai/);
+  assert.doesNotMatch(richContext.lastRequest.url, /ignored/);
+  assert.match(richContext.results[0].body, /Reader note:/);
+  assert.match(richContext.results[0].body, /&lt;this&gt; &amp; revisit/);
 
   const pageCalls = [];
   const paginationContext = makeContext({

@@ -22,6 +22,10 @@ bundle.
 - Open items in Reader or on the original website
 - Original-site author icons, cached by domain with tiny-icon filtering
 - Optional unseen-only initial import
+- Native source cards with title, summary, author, site, and cover image
+- Required-tag filtering (up to five Reader tags, combined with AND semantics)
+- Optional Reader tag and note display
+- Reading progress and word-count annotations
 - Incremental synchronization after the initial 25, 50, or 100-item import
 - Lossless incremental pagination with configuration-aware checkpoints
 
@@ -31,8 +35,8 @@ time and retain Reader's cursor when more remain, so the next refresh resumes
 without advancing the synchronization window. A five-minute overlap protects
 against delayed items; Tapestry deduplicates them by URL.
 
-The connector is read-only. It never changes seen state or document location in
-Reader.
+Version 1.3 remains read-only. It never changes seen state or document location
+in Reader.
 
 ## Development and tests
 

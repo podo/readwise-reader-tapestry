@@ -156,6 +156,7 @@ function buildQuery(updatedAfter, limit, includeFullContent, pageCursor) {
 
   const category = normalizedCategory();
   if (category) pairs.push(["category", category]);
+  for (const tag of normalizedRequiredTags()) pairs.push(["tag", tag]);
   if (updatedAfter) pairs.push(["updatedAfter", updatedAfter]);
   if (pageCursor) pairs.push(["pageCursor", pageCursor]);
 
@@ -182,6 +183,9 @@ function documentToItem(document, siteIcons) {
   if (document.title) item.title = document.title;
   item.body = documentBody(document, originalUrl);
 
+  const linkAttachment = documentLinkAttachment(document, originalUrl);
+  if (linkAttachment) item.attachments = [linkAttachment];
+
   const identityName = document.site_name || document.author || "Readwise Reader";
   const identity = Identity.createWithName(identityName);
   identity.uri = originalUrl;
@@ -193,13 +197,7 @@ function documentToItem(document, siteIcons) {
   }
   item.author = identity;
 
-  const annotationParts = [];
-  if (document.category) annotationParts.push(displayCategory(document.category));
-  if (document.reading_time) annotationParts.push(document.reading_time);
-  if (!document.first_opened_at) annotationParts.push("Unseen in Reader");
-  if (annotationParts.length > 0) {
-    item.annotations = [Annotation.createWithText(annotationParts.join(" · "))];
-  }
+  item.annotations = documentAnnotations(document);
 
   return item;
 }
@@ -315,10 +313,6 @@ function documentBody(document, originalUrl) {
   const wantsFullContent = normalizedChoice(content_detail) === "full article";
   let body = "";
 
-  if (document.image_url && (!wantsFullContent || !document.html_content)) {
-    body += `<p><img src="${escapeAttribute(document.image_url)}" /></p>`;
-  }
-
   if (wantsFullContent && document.html_content) {
     body += document.html_content;
   }
@@ -329,11 +323,79 @@ function documentBody(document, originalUrl) {
     body += "<p>No summary is available. Open the document to read it.</p>";
   }
 
+  if (show_notes === "on" && document.notes) {
+    body += `<blockquote><strong>Reader note:</strong> ${escapeHtml(document.notes)}</blockquote>`;
+  }
+
   if (originalUrl) {
     body += `<p><a href="${escapeAttribute(originalUrl)}">Open original</a></p>`;
   }
 
   return body;
+}
+
+function documentLinkAttachment(document, originalUrl) {
+  if (!normalizedWebOrigin(originalUrl)) return null;
+
+  const attachment = LinkAttachment.createWithUrl(originalUrl);
+  if (document.title) attachment.title = document.title;
+  if (document.summary) attachment.subtitle = document.summary;
+  if (document.site_name) attachment.siteName = document.site_name;
+  if (document.author) attachment.authorName = document.author;
+  if (document.image_url) attachment.image = document.image_url;
+  attachment.type = linkTypeForCategory(document.category);
+  return attachment;
+}
+
+function documentAnnotations(document) {
+  const annotations = [];
+  const details = [];
+
+  if (document.category) details.push(displayCategory(document.category));
+  if (document.reading_time) details.push(document.reading_time);
+  if (normalizedChoice(metadata_detail) === "rich") {
+    const progress = formattedProgress(document.reading_progress);
+    if (progress) details.push(progress);
+    const wordCount = formattedWordCount(document.word_count);
+    if (wordCount) details.push(wordCount);
+  }
+  if (!document.first_opened_at) details.push("Unseen in Reader");
+  if (details.length > 0) annotations.push(Annotation.createWithText(details.join(" · ")));
+
+  const tags = documentTagNames(document.tags);
+  if (show_tags === "on" && tags.length > 0) {
+    annotations.push(Annotation.createWithText(`Tags: ${tags.join(", ")}`));
+  }
+
+  return annotations.length > 0 ? annotations : undefined;
+}
+
+function documentTagNames(tags) {
+  if (Array.isArray(tags)) {
+    return tags.map(tag => typeof tag === "string" ? tag : tag && (tag.name || tag.key))
+      .filter(Boolean);
+  }
+  if (tags && typeof tags === "object") return Object.values(tags).filter(Boolean).map(String);
+  return [];
+}
+
+function formattedProgress(value) {
+  const progress = Number(value);
+  if (!Number.isFinite(progress) || progress <= 0) return null;
+  return `${Math.min(100, Math.round(progress * 100))}% read`;
+}
+
+function formattedWordCount(value) {
+  const count = Number(value);
+  if (!Number.isFinite(count) || count <= 0) return null;
+  return `${Math.round(count).toLocaleString("en-US")} words`;
+}
+
+function linkTypeForCategory(category) {
+  const value = normalizedChoice(category);
+  if (value === "video") return "video.other";
+  if (value === "epub") return "book";
+  return "article";
 }
 
 function documentDate(document) {
@@ -357,7 +419,11 @@ function currentSyncSignature() {
     content: normalizedChoice(content_detail),
     target: normalizedChoice(open_target),
     unseen: only_unseen === "on",
-    batchSize: normalizedBatchSize()
+    batchSize: normalizedBatchSize(),
+    tags: normalizedRequiredTags(),
+    showTags: show_tags === "on",
+    showNotes: show_notes === "on",
+    metadata: normalizedChoice(metadata_detail)
   });
 }
 
@@ -422,6 +488,11 @@ function normalizedCategory() {
 function normalizedBatchSize() {
   const value = parseInt(batch_size, 10);
   return [25, 50, 100].includes(value) ? value : 50;
+}
+
+function normalizedRequiredTags() {
+  if (typeof required_tags !== "string") return [];
+  return required_tags.split(",").map(tag => tag.trim()).filter(Boolean).slice(0, 5);
 }
 
 function normalizedChoice(value) {

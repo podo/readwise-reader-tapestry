@@ -41,6 +41,31 @@
       "value": "off"
     },
     {
+      "name": "required_tags",
+      "type": "text",
+      "prompt": "Required Tags (comma-separated, max 5)",
+      "placeholder": "research, ai"
+    },
+    {
+      "name": "metadata_detail",
+      "type": "choices",
+      "prompt": "Metadata Detail",
+      "choices": "Compact,Rich",
+      "value": "Rich"
+    },
+    {
+      "name": "show_tags",
+      "type": "switch",
+      "prompt": "Show Reader Tags",
+      "value": "on"
+    },
+    {
+      "name": "show_notes",
+      "type": "switch",
+      "prompt": "Show Reader Notes",
+      "value": "off"
+    },
+    {
       "name": "batch_size",
       "type": "choices",
       "prompt": "Initial Item Limit",
