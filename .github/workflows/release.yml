@@ -29,7 +29,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Build connector
-        run: ./scripts/build.sh
+        run: bash scripts/build.sh
 
       - name: Create GitHub release
         env:
