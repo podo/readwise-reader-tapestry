@@ -26,6 +26,8 @@ bundle.
 - Required-tag filtering (up to five Reader tags, combined with AND semantics)
 - Optional Reader tag and note display
 - Reading progress and word-count annotations
+- Optional actions to mark documents seen/unseen or move them to Inbox, Later,
+  or Archive
 - Incremental synchronization after the initial 25, 50, or 100-item import
 - Lossless incremental pagination with configuration-aware checkpoints
 
@@ -35,8 +37,10 @@ time and retain Reader's cursor when more remain, so the next refresh resumes
 without advancing the synchronization window. A five-minute overlap protects
 against delayed items; Tapestry deduplicates them by URL.
 
-Version 1.3 remains read-only. It never changes seen state or document location
-in Reader.
+Reader actions are disabled by default. Turn on **Enable Reader Actions** for a
+feed to allow Tapestry to change seen state and move that feed's documents
+between Inbox, Later, and Archive. The connector sends only the selected change
+to Reader's document update endpoint.
 
 ## Development and tests
 

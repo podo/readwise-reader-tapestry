@@ -19,6 +19,10 @@ header. It is not included in the connector bundle.
 - **Item Content** uses either Reader's compact summary or its parsed article HTML.
 - **Open Items In** opens either the Reader document or its original website.
 - **Import Only Unseen** filters out documents already opened in Reader at import time.
+- **Required Tags** filters by up to five comma-separated Reader tags. All tags must match.
+- **Metadata Detail** adds reading progress and word count in Rich mode.
+- **Show Reader Tags** and **Show Reader Notes** control their timeline display.
+- **Enable Reader Actions** adds seen/unseen and Inbox/Later/Archive actions.
 - **Initial Item Limit** controls the first import. Later refreshes are incremental.
 
 Tapestry uses each document's original-site icon as its author avatar when a
@@ -31,8 +35,9 @@ update cannot be completed in one refresh. Changing a feed filter starts a new
 initial import for that configuration instead of reusing an incompatible sync
 timestamp.
 
-The connector is intentionally read-only. Reading or saving an item in Tapestry
-does not mark it seen, move it, archive it, or otherwise modify Reader.
+Reader actions are disabled by default. When enabled, only selecting an explicit
+action sends a document update to Reader; merely viewing an item in Tapestry
+does not change it.
 
 Reader's document API is limited to 20 requests per minute. This connector uses
 at most five pages during one incremental refresh and includes a small overlap

@@ -1,6 +1,7 @@
 // local.readwise.reader
 
 const apiBase = "https://readwise.io/api/v3/list/";
+const updateApiBase = "https://readwise.io/api/v3/update/";
 const syncStateKey = "syncStateV2";
 const overlapMilliseconds = 5 * 60 * 1000;
 const maximumIncrementalPages = 5;
@@ -15,6 +16,12 @@ function verify() {
 
 function load() {
   loadAsync().then(processResults).catch(processError);
+}
+
+function performAction(actionId, actionValue, item) {
+  performReaderAction(actionId, actionValue, item)
+    .then(updatedItem => actionComplete(updatedItem, null))
+    .catch(error => actionComplete(null, error));
 }
 
 async function verifyAsync() {
@@ -117,6 +124,72 @@ async function readerRequest(url) {
   return text;
 }
 
+async function readerUpdate(documentId, changes) {
+  const headers = {
+    "Authorization": `Token ${api_token.trim()}`,
+    "Accept": "application/json",
+    "Content-Type": "application/json"
+  };
+
+  let text;
+  try {
+    text = await sendRequest(
+      `${updateApiBase}${encodeURIComponent(documentId)}/`,
+      "PATCH",
+      JSON.stringify(changes),
+      headers,
+      true
+    );
+  }
+  catch (error) {
+    throw normalizedReaderError(error);
+  }
+
+  try {
+    const response = JSON.parse(text);
+    if (response && typeof response.status === "number" && Object.prototype.hasOwnProperty.call(response, "body")) {
+      if (response.status >= 400) throw readerStatusError(response.status, response.headers);
+    }
+  }
+  catch (error) {
+    if (error && error.readerApiError) throw error;
+  }
+}
+
+async function performReaderAction(actionId, actionValue, item) {
+  if (enable_reader_actions !== "on") {
+    throw new Error("Reader actions are disabled for this feed.");
+  }
+
+  let state;
+  try {
+    state = JSON.parse(actionValue);
+  }
+  catch (error) {
+    throw new Error("This item has invalid Reader action data.");
+  }
+  if (!state || !state.id) throw new Error("This item is missing its Reader document ID.");
+
+  const changes = actionChanges(actionId);
+  if (!changes) throw new Error(`Unknown Reader action: ${actionId}`);
+  await readerUpdate(state.id, changes);
+
+  if (Object.prototype.hasOwnProperty.call(changes, "seen")) state.seen = changes.seen;
+  if (changes.location) state.location = changes.location;
+  item.actions = readerActions(state.id, state.location, state.seen);
+  updateSeenAnnotation(item, state.seen);
+  return item;
+}
+
+function actionChanges(actionId) {
+  if (actionId === "mark_seen") return { seen: true };
+  if (actionId === "mark_unseen") return { seen: false };
+  if (actionId === "move_later") return { location: "later" };
+  if (actionId === "move_archive") return { location: "archive" };
+  if (actionId === "move_inbox") return { location: "new" };
+  return null;
+}
+
 function readerStatusError(status, headers) {
   let message = `Reader returned HTTP ${status}.`;
   if (status === 401 || status === 403) {
@@ -198,6 +271,9 @@ function documentToItem(document, siteIcons) {
   item.author = identity;
 
   item.annotations = documentAnnotations(document);
+  if (enable_reader_actions === "on") {
+    item.actions = readerActions(document.id, document.location, documentSeen(document));
+  }
 
   return item;
 }
@@ -359,7 +435,7 @@ function documentAnnotations(document) {
     const wordCount = formattedWordCount(document.word_count);
     if (wordCount) details.push(wordCount);
   }
-  if (!document.first_opened_at) details.push("Unseen in Reader");
+  if (!documentSeen(document)) details.push("Unseen in Reader");
   if (details.length > 0) annotations.push(Annotation.createWithText(details.join(" · ")));
 
   const tags = documentTagNames(document.tags);
@@ -368,6 +444,29 @@ function documentAnnotations(document) {
   }
 
   return annotations.length > 0 ? annotations : undefined;
+}
+
+function readerActions(id, location, seen) {
+  const value = JSON.stringify({ id, location: location || normalizedLocation(), seen: Boolean(seen) });
+  const actions = {};
+  actions[seen ? "mark_unseen" : "mark_seen"] = value;
+  if (location !== "later") actions.move_later = value;
+  if (location !== "archive") actions.move_archive = value;
+  if (location !== "new") actions.move_inbox = value;
+  return actions;
+}
+
+function updateSeenAnnotation(item, seen) {
+  const annotations = Array.isArray(item.annotations) ? item.annotations.slice() : [];
+  if (annotations.length === 0) {
+    if (!seen) annotations.push(Annotation.createWithText("Unseen in Reader"));
+  }
+  else if (annotations[0] && typeof annotations[0].text === "string") {
+    const parts = annotations[0].text.split(" · ").filter(part => part !== "Unseen in Reader");
+    if (!seen) parts.push("Unseen in Reader");
+    annotations[0].text = parts.join(" · ");
+  }
+  item.annotations = annotations.length > 0 ? annotations : undefined;
 }
 
 function documentTagNames(tags) {
@@ -423,7 +522,8 @@ function currentSyncSignature() {
     tags: normalizedRequiredTags(),
     showTags: show_tags === "on",
     showNotes: show_notes === "on",
-    metadata: normalizedChoice(metadata_detail)
+    metadata: normalizedChoice(metadata_detail),
+    actions: enable_reader_actions === "on"
   });
 }
 
@@ -458,8 +558,12 @@ function isTopLevelDocument(document) {
 }
 
 function shouldIncludeDocument(document) {
-  if (only_unseen === "on" && document.first_opened_at) return false;
+  if (only_unseen === "on" && documentSeen(document)) return false;
   return true;
+}
+
+function documentSeen(document) {
+  return typeof document.seen === "boolean" ? document.seen : Boolean(document.first_opened_at);
 }
 
 function validateToken() {

@@ -1,0 +1,29 @@
+{
+  "items": [
+    {
+      "id": "mark_seen",
+      "name": "Mark Seen in Reader",
+      "icon": "checkmark.circle.fill"
+    },
+    {
+      "id": "mark_unseen",
+      "name": "Mark Unseen in Reader",
+      "icon": "circle"
+    },
+    {
+      "id": "move_later",
+      "name": "Move to Later",
+      "icon": "tapestry.bookmark.fill"
+    },
+    {
+      "id": "move_archive",
+      "name": "Move to Archive",
+      "icon": "archivebox.fill"
+    },
+    {
+      "id": "move_inbox",
+      "name": "Move to Inbox",
+      "icon": "tray.fill"
+    }
+  ]
+}

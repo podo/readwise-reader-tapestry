@@ -66,6 +66,12 @@
       "value": "off"
     },
     {
+      "name": "enable_reader_actions",
+      "type": "switch",
+      "prompt": "Enable Reader Actions",
+      "value": "off"
+    },
+    {
       "name": "batch_size",
       "type": "choices",
       "prompt": "Initial Item Limit",

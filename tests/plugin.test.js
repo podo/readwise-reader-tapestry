@@ -33,6 +33,7 @@ function makeContext(overrides = {}) {
         image_url: "https://example.com/cover.jpg",
         parent_id: null,
         first_opened_at: null,
+        seen: false,
         published_date: "2026-08-28T08:00:00Z",
         saved_at: "2026-08-29T10:00:00Z"
       },
@@ -58,6 +59,7 @@ function makeContext(overrides = {}) {
     metadata_detail: "Rich",
     show_tags: "on",
     show_notes: "off",
+    enable_reader_actions: "off",
     batch_size: "50",
     sendRequest: async (url, method, parameters, headers) => {
       context.lastRequest = { url, method, parameters, headers };
@@ -66,6 +68,7 @@ function makeContext(overrides = {}) {
     processVerification: value => { context.verification = value; },
     processResults: value => { context.results = value; },
     processError: error => { context.error = error; },
+    actionComplete: (result, error) => { context.actionResult = result; context.actionError = error; },
     getItem: key => state.get(key) || null,
     setItem: (key, value) => state.set(key, value),
     _state: state,
@@ -160,6 +163,25 @@ async function run() {
   assert.doesNotMatch(richContext.lastRequest.url, /ignored/);
   assert.match(richContext.results[0].body, /Reader note:/);
   assert.match(richContext.results[0].body, /&lt;this&gt; &amp; revisit/);
+
+  const actionsContext = makeContext({ enable_reader_actions: "on" });
+  vm.runInContext("load()", actionsContext);
+  await settle();
+  const actionItem = actionsContext.results[0];
+  assert.ok(actionItem.actions.mark_seen);
+  assert.ok(actionItem.actions.move_later);
+  vm.runInContext(
+    `performAction("mark_seen", ${JSON.stringify(JSON.stringify({ id: "doc-1", location: "feed", seen: false }))}, results[0])`,
+    actionsContext
+  );
+  await settle();
+  assert.ifError(actionsContext.actionError);
+  assert.strictEqual(actionsContext.lastRequest.method, "PATCH");
+  assert.match(actionsContext.lastRequest.url, /\/api\/v3\/update\/doc-1\/$/);
+  assert.deepStrictEqual(JSON.parse(actionsContext.lastRequest.parameters), { seen: true });
+  assert.ok(actionsContext.actionResult.actions.mark_unseen);
+  assert.ok(!actionsContext.actionResult.actions.mark_seen);
+  assert.doesNotMatch(actionsContext.actionResult.annotations[0].text, /Unseen in Reader/);
 
   const pageCalls = [];
   const paginationContext = makeContext({
