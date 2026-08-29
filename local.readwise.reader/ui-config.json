@@ -1,0 +1,51 @@
+{
+  "inputs": [
+    {
+      "name": "api_token",
+      "type": "text",
+      "prompt": "Reader API Token",
+      "placeholder": "Paste token from readwise.io/access_token"
+    },
+    {
+      "name": "reader_location",
+      "type": "choices",
+      "prompt": "Reader Location",
+      "choices": "Feed,Inbox,Later,Shortlist,Archive",
+      "value": "Feed"
+    },
+    {
+      "name": "document_category",
+      "type": "choices",
+      "prompt": "Content Type",
+      "choices": "All,Article,Email,RSS,PDF,EPUB,Tweet,Video",
+      "value": "All"
+    },
+    {
+      "name": "content_detail",
+      "type": "choices",
+      "prompt": "Item Content",
+      "choices": "Summary,Full Article",
+      "value": "Summary"
+    },
+    {
+      "name": "open_target",
+      "type": "choices",
+      "prompt": "Open Items In",
+      "choices": "Reader,Original Website",
+      "value": "Reader"
+    },
+    {
+      "name": "only_unseen",
+      "type": "switch",
+      "prompt": "Import Only Unseen",
+      "value": "off"
+    },
+    {
+      "name": "batch_size",
+      "type": "choices",
+      "prompt": "Initial Item Limit",
+      "choices": "25,50,100",
+      "value": "50"
+    }
+  ]
+}

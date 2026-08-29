@@ -1,0 +1,14 @@
+{
+  "id": "local.readwise.reader",
+  "display_name": "Readwise Reader",
+  "service_name": "Reader",
+  "default_color": "orange",
+  "icon": "https://readwise.io/favicon.ico",
+  "item_style": "article",
+  "site": "https://readwise.io",
+  "needs_verification": true,
+  "verify_variables": true,
+  "provides_attachments": false,
+  "minimum_app_version": "1.3",
+  "version": 1
+}

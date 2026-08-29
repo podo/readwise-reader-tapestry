@@ -1,0 +1,24 @@
+name: Test connector
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run mocked connector tests
+        run: node tests/plugin.test.js
+      - name: Validate configuration
+        run: |
+          node -e "for (const file of ['local.readwise.reader/plugin-config.json', 'local.readwise.reader/ui-config.json']) JSON.parse(require('fs').readFileSync(file, 'utf8'))"
+      - name: Build installable connector
+        run: bash scripts/build.sh
