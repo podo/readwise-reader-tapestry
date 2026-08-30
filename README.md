@@ -23,6 +23,7 @@ bundle.
 - Original-site author icons, cached by domain with tiny-icon filtering
 - Optional unseen-only initial import
 - Native source cards with title, summary, author, site, and cover image
+- Normalized full-article media with lazy-image recovery and native galleries
 - Optional tag filtering by key or display name, plus an Untagged mode
 - Optional Reader tag and note display
 - Reading progress and word-count annotations

@@ -26,6 +26,12 @@ header. It is not included in the connector bundle.
 - **Enable Reader Actions** adds seen/unseen and Inbox/Later/Archive/Feed actions.
 - **Initial Item Limit** controls the first import. Later refreshes are incremental.
 
+In Full Article mode, relative and lazy-loaded image URLs are normalized against
+the original document. Up to four useful inline images are also supplied as
+native Tapestry media attachments. Tiny tracking images, duplicate URLs, and
+unsupported SVG/ICO assets are ignored. If Reader's cover image is unusable,
+the source card falls back to the first usable article image.
+
 Tapestry uses each document's original-site icon as its author avatar when a
 suitable icon is available. Avatars are cached by site or Reddit identity, and
 URLs that explicitly advertise a tiny 16–48 pixel raster are ignored to avoid
@@ -43,8 +49,8 @@ Reader actions are disabled by default. When enabled, only selecting an explicit
 action sends a document update to Reader; merely viewing an item in Tapestry
 does not change it.
 
-After an action, the connector retrieves the document again so its actions and
-seen state reflect the location Reader actually selected.
+After a successful action, the connector updates the card immediately instead
+of waiting for Reader's list endpoint to reflect the change.
 
 Tapestry cannot retract an existing timeline item through the connector API.
 Items moved outside a location-specific feed may therefore remain in its older

@@ -19,6 +19,10 @@ uses the same processing pipeline as the app.
 - Confirm the location-free Reader URL opens the same document after moves.
 - Check tag filter values `All`, a real tag key/name, and `Untagged` when supported.
 - Confirm source LinkAttachment and full-content media do not duplicate.
+- Confirm relative and lazy-loaded article images render in both the timeline
+  gallery and full-content detail view.
+- Confirm broken/tiny cover images fall back to a usable article image or a
+  text-only source card.
 - Confirm a Reddit post shows its author avatar, with subreddit/site fallbacks.
 - With actions enabled, test seen/unseen and every supported move action.
 - Confirm PATCH bodies and headers reach Reader correctly.

@@ -15,6 +15,7 @@ const tagCacheKey = "readerTagCacheV1";
 const tagCacheTtlMilliseconds = 24 * 60 * 60 * 1000;
 const maximumTagPages = 5;
 const maximumCachedTags = 500;
+const maximumArticleMediaAttachments = 4;
 
 function verify() {
   verifyAsync().then(processVerification).catch(processError);
@@ -290,10 +291,19 @@ function documentToItem(document, siteIcons) {
   const item = Item.createWithUriDate(uri, documentDate(document));
 
   if (document.title) item.title = document.title;
-  item.body = documentBody(document);
+  item.body = documentBody(document, originalUrl);
 
-  const linkAttachment = documentLinkAttachment(document, originalUrl);
-  if (linkAttachment) item.attachments = [linkAttachment];
+  const attachments = articleMediaAttachments(item.body);
+  const fallbackImageUrl = attachments.length > 0 ? attachments[0].url : null;
+  const linkAttachment = documentLinkAttachment(document, originalUrl, fallbackImageUrl);
+  if (linkAttachment) {
+    const duplicateCoverIndex = linkAttachment.image
+      ? attachments.findIndex(attachment => attachment.url === linkAttachment.image)
+      : -1;
+    if (duplicateCoverIndex >= 0) attachments.splice(duplicateCoverIndex, 1);
+    attachments.push(linkAttachment);
+  }
+  if (attachments.length > 0) item.attachments = attachments;
 
   const identityName = document.site_name || document.author || "Readwise Reader";
   const identity = Identity.createWithName(identityName);
@@ -488,12 +498,12 @@ function writeSiteIconCache(cache) {
   setItem(siteIconCacheKey, JSON.stringify(Object.fromEntries(entries)));
 }
 
-function documentBody(document) {
+function documentBody(document, originalUrl) {
   const wantsFullContent = normalizedChoice(content_detail) === "full article";
   let body = "";
 
   if (wantsFullContent && document.html_content) {
-    body += document.html_content;
+    body += normalizeArticleHtml(document.html_content, originalUrl);
   }
   else if (document.summary) {
     body += `<p>${escapeHtml(document.summary)}</p>`;
@@ -509,7 +519,158 @@ function documentBody(document) {
   return body;
 }
 
-function documentLinkAttachment(document, originalUrl) {
+function normalizeArticleHtml(html, baseUrl) {
+  return String(html).replace(/<(?:img|source|video)\b[^>]*>/gi, tag => {
+    let normalized = tag;
+    const isImage = /^<img\b/i.test(tag);
+    const currentSrc = htmlAttributeValue(normalized, "src");
+    const lazySrc = firstHtmlAttributeValue(normalized, ["data-src", "data-original", "data-lazy-src"]);
+    let src = normalizedMediaUrl(currentSrc, baseUrl);
+    if ((!src || isPlaceholderMediaUrl(src)) && lazySrc) {
+      src = normalizedMediaUrl(lazySrc, baseUrl);
+    }
+    if (src) normalized = setHtmlAttribute(normalized, "src", src);
+    else if (currentSrc && !/^data:image\//i.test(currentSrc)) normalized = removeHtmlAttribute(normalized, "src");
+
+    const currentSrcset = htmlAttributeValue(normalized, "srcset");
+    const lazySrcset = firstHtmlAttributeValue(normalized, ["data-srcset", "data-lazy-srcset"]);
+    const srcset = normalizedSrcset(currentSrcset || lazySrcset, baseUrl);
+    if (srcset) normalized = setHtmlAttribute(normalized, "srcset", srcset);
+    else if (currentSrcset) normalized = removeHtmlAttribute(normalized, "srcset");
+
+    if (isImage && (!src || isPlaceholderMediaUrl(src)) && !srcset && !/^data:image\//i.test(currentSrc || "")) {
+      return "";
+    }
+
+    const poster = normalizedMediaUrl(htmlAttributeValue(normalized, "poster"), baseUrl);
+    if (poster) normalized = setHtmlAttribute(normalized, "poster", poster);
+
+    for (const attribute of ["data-src", "data-original", "data-lazy-src", "data-srcset", "data-lazy-srcset", "loading"]) {
+      normalized = removeHtmlAttribute(normalized, attribute);
+    }
+    return normalized;
+  });
+}
+
+function articleMediaAttachments(html) {
+  if (normalizedChoice(content_detail) !== "full article" || !html) return [];
+
+  const attachments = [];
+  const seen = new Set();
+  const tags = String(html).match(/<img\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const url = bestImageUrlFromTag(tag);
+    if (!isAcceptableArticleMedia(url, tag) || seen.has(url)) continue;
+
+    const attachment = MediaAttachment.createWithUrl(url);
+    attachment.mimeType = "image";
+    const alt = htmlAttributeValue(tag, "alt");
+    if (alt) attachment.text = alt;
+    const width = numericHtmlAttribute(tag, "width");
+    const height = numericHtmlAttribute(tag, "height");
+    if (width && height) attachment.aspectSize = { width, height };
+    attachments.push(attachment);
+    seen.add(url);
+    if (attachments.length >= maximumArticleMediaAttachments) break;
+  }
+  return attachments;
+}
+
+function bestImageUrlFromTag(tag) {
+  const src = normalizedMediaUrl(htmlAttributeValue(tag, "src"), null);
+  if (src && !isPlaceholderMediaUrl(src)) return src;
+
+  const srcset = htmlAttributeValue(tag, "srcset");
+  const candidates = srcset ? srcset.split(",").map(candidate => candidate.trim().split(/\s+/)[0]) : [];
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const candidate = normalizedMediaUrl(candidates[index], null);
+    if (candidate && !isPlaceholderMediaUrl(candidate)) return candidate;
+  }
+  return null;
+}
+
+function isAcceptableArticleMedia(url, tag) {
+  if (!url || isPlaceholderMediaUrl(url)) return false;
+  try {
+    const parsed = new URL(url);
+    if (/\.(?:svg|ico)$/i.test(parsed.pathname)) return false;
+  }
+  catch (error) {
+    return false;
+  }
+
+  const width = numericHtmlAttribute(tag, "width");
+  const height = numericHtmlAttribute(tag, "height");
+  if ((width && width <= 2) || (height && height <= 2)) return false;
+  if (width && height && width <= 64 && height <= 64) return false;
+  return true;
+}
+
+function normalizedMediaUrl(value, baseUrl) {
+  if (!value || typeof value !== "string") return null;
+  const decoded = decodeHtmlUrl(value.trim());
+  if (!decoded || /^(?:data|blob|javascript|cid):/i.test(decoded)) return null;
+  try {
+    const url = baseUrl ? new URL(decoded, baseUrl) : new URL(decoded);
+    return /^https?:$/i.test(url.protocol) ? url.href : null;
+  }
+  catch (error) {
+    return null;
+  }
+}
+
+function normalizedSrcset(value, baseUrl) {
+  if (!value) return null;
+  const candidates = String(value).split(",").map(candidate => {
+    const pieces = candidate.trim().split(/\s+/);
+    const url = normalizedMediaUrl(pieces.shift(), baseUrl);
+    return url ? [url, ...pieces].join(" ") : null;
+  }).filter(Boolean);
+  return candidates.length > 0 ? candidates.join(", ") : null;
+}
+
+function isPlaceholderMediaUrl(value) {
+  return /(?:^|[/_.-])(?:spacer|transparent|tracking|blank|1x1)(?:[/_.?&#-]|$)/i.test(String(value));
+}
+
+function isAcceptableCoverImage(url) {
+  if (!isAcceptableArticleMedia(url, "")) return false;
+  return !/(?:^|[^0-9])(16|24|32|48|64)(?:x\1)?(?:[^0-9]|$)/i.test(String(url));
+}
+
+function firstHtmlAttributeValue(tag, names) {
+  for (const name of names) {
+    const value = htmlAttributeValue(tag, name);
+    if (value) return value;
+  }
+  return null;
+}
+
+function htmlAttributeValue(tag, name) {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = String(tag).match(new RegExp(`\\s${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+  return match ? (match[1] ?? match[2] ?? match[3] ?? null) : null;
+}
+
+function setHtmlAttribute(tag, name, value) {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`\\s${escapedName}\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s>]+)`, "i");
+  const attribute = ` ${name}="${escapeAttribute(value)}"`;
+  if (pattern.test(tag)) return tag.replace(pattern, attribute);
+  return tag.replace(/\s*\/?\s*>$/, match => `${attribute}${match}`);
+}
+
+function removeHtmlAttribute(tag, name) {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return String(tag).replace(new RegExp(`\\s${escapedName}(?:\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s>]+))?`, "ig"), "");
+}
+
+function numericHtmlAttribute(tag, name) {
+  const value = Number.parseInt(htmlAttributeValue(tag, name), 10);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function documentLinkAttachment(document, originalUrl, fallbackImageUrl) {
   if (!normalizedWebOrigin(originalUrl)) return null;
 
   const attachment = LinkAttachment.createWithUrl(originalUrl);
@@ -517,7 +678,9 @@ function documentLinkAttachment(document, originalUrl) {
   if (document.summary) attachment.subtitle = document.summary;
   if (document.site_name) attachment.siteName = document.site_name;
   if (document.author) attachment.authorName = document.author;
-  if (document.image_url) attachment.image = document.image_url;
+  const candidateCoverUrl = normalizedMediaUrl(document.image_url, originalUrl);
+  const coverUrl = isAcceptableCoverImage(candidateCoverUrl) ? candidateCoverUrl : fallbackImageUrl;
+  if (coverUrl) attachment.image = coverUrl;
   attachment.type = linkTypeForCategory(document.category);
   return attachment;
 }
@@ -619,7 +782,8 @@ function currentSyncSignature() {
     showTags: show_tags === "on",
     showNotes: show_notes === "on",
     metadata: normalizedChoice(metadata_detail),
-    actions: enable_reader_actions === "on"
+    actions: enable_reader_actions === "on",
+    mediaVersion: 1
   });
 }
 

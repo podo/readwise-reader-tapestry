@@ -13,6 +13,7 @@ const actionDefinitions = JSON.parse(fs.readFileSync(
 ));
 
 function makeContext(overrides = {}) {
+  const { sampleDocument, ...contextOverrides } = overrides;
   const state = new Map();
   const sample = {
     count: 2,
@@ -36,6 +37,7 @@ function makeContext(overrides = {}) {
         notes: "Remember <this> & revisit.",
         summary: "Summary with <unsafe> markup & symbols.",
         image_url: "https://example.com/cover.jpg",
+        html_content: null,
         parent_id: null,
         first_opened_at: null,
         seen: false,
@@ -50,6 +52,7 @@ function makeContext(overrides = {}) {
       }
     ]
   };
+  if (sampleDocument) Object.assign(sample.results[0], sampleDocument);
 
   const context = {
     console,
@@ -126,9 +129,12 @@ function makeContext(overrides = {}) {
       createWithText: text => ({ text })
     },
     LinkAttachment: {
-      createWithUrl: url => ({ url })
+      createWithUrl: url => ({ url, kind: "link" })
     },
-    ...overrides
+    MediaAttachment: {
+      createWithUrl: url => ({ url, kind: "media" })
+    },
+    ...contextOverrides
   };
 
   vm.createContext(context);
@@ -172,6 +178,74 @@ async function run() {
   );
   assert.strictEqual(context.iconLookupCount, 1);
   assert.doesNotMatch(context.lastRequest.url, /[?&]tag=/, "All must not add a tag filter");
+
+  const mediaContext = makeContext({
+    content_detail: "Full Article",
+    sampleDocument: {
+      image_url: "/covers/hero.jpg",
+      html_content: [
+        '<p>Article text</p>',
+        '<img src="/images/relative.jpg" alt="Relative image" width="1200" height="800" loading="lazy">',
+        '<img src="data:image/gif;base64,placeholder" data-src="//cdn.example.com/lazy.jpg" data-srcset="//cdn.example.com/lazy-small.jpg 400w, /images/lazy-large.jpg 1200w" alt="Lazy image">',
+        '<img src="/pixel.gif" width="1" height="1">',
+        '<img src="/images/unsupported.svg" alt="Unsupported">',
+        '<img src="/images/relative.jpg" alt="Duplicate">',
+        '<picture><source data-srcset="/images/picture.webp 1x, /images/picture-large.jpg 2x"><img src="/images/picture.jpg" alt="Picture"></picture>',
+        '<video poster="/images/poster.jpg"></video>'
+      ].join("")
+    }
+  });
+  vm.runInContext("load()", mediaContext);
+  await settle();
+  assert.ifError(mediaContext.error);
+  const mediaItem = mediaContext.results[0];
+  assert.match(mediaItem.body, /src="https:\/\/example\.com\/images\/relative\.jpg"/);
+  assert.match(mediaItem.body, /src="https:\/\/cdn\.example\.com\/lazy\.jpg"/);
+  assert.match(mediaItem.body, /https:\/\/example\.com\/images\/lazy-large\.jpg 1200w/);
+  assert.match(mediaItem.body, /poster="https:\/\/example\.com\/images\/poster\.jpg"/);
+  assert.doesNotMatch(mediaItem.body, /data-src|data-srcset|loading="lazy"/);
+  assert.deepStrictEqual(
+    Array.from(mediaItem.attachments)
+      .filter(attachment => attachment.kind === "media")
+      .map(attachment => attachment.url),
+    [
+      "https://example.com/images/relative.jpg",
+      "https://cdn.example.com/lazy.jpg",
+      "https://example.com/images/picture.jpg"
+    ]
+  );
+  assert.strictEqual(mediaItem.attachments[0].text, "Relative image");
+  assert.strictEqual(mediaItem.attachments[0].aspectSize.width, 1200);
+  assert.strictEqual(mediaItem.attachments[0].aspectSize.height, 800);
+  assert.strictEqual(mediaItem.attachments.at(-1).kind, "link");
+  assert.strictEqual(mediaItem.attachments.at(-1).image, "https://example.com/covers/hero.jpg");
+
+  const coverFallbackContext = makeContext({
+    content_detail: "Full Article",
+    sampleDocument: {
+      image_url: "javascript:broken",
+      html_content: '<img src="/images/fallback.jpg" alt="Fallback">'
+    }
+  });
+  vm.runInContext("load()", coverFallbackContext);
+  await settle();
+  assert.strictEqual(
+    coverFallbackContext.results[0].attachments.at(-1).image,
+    "https://example.com/images/fallback.jpg"
+  );
+  assert.strictEqual(
+    coverFallbackContext.results[0].attachments.filter(attachment => attachment.kind === "media").length,
+    0,
+    "an image used by the source card must not also appear in the media gallery"
+  );
+
+  const textOnlyCardContext = makeContext({
+    sampleDocument: { image_url: "https://example.com/favicon-32x32.png" }
+  });
+  vm.runInContext("load()", textOnlyCardContext);
+  await settle();
+  assert.strictEqual(textOnlyCardContext.results[0].attachments[0].kind, "link");
+  assert.strictEqual(textOnlyCardContext.results[0].attachments[0].image, undefined);
 
   vm.runInContext("load()", context);
   await settle();
