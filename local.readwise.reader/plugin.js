@@ -596,7 +596,9 @@ function normalizedBatchSize() {
 
 function normalizedRequiredTags() {
   if (typeof required_tags !== "string") return [];
-  return required_tags.split(",").map(tag => tag.trim()).filter(Boolean).slice(0, 5);
+  const value = required_tags.trim();
+  if (!value || normalizedChoice(value) === "all") return [];
+  return value.split(",").map(tag => tag.trim()).filter(Boolean).slice(0, 5);
 }
 
 function normalizedChoice(value) {

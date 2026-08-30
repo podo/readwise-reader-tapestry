@@ -19,7 +19,8 @@ header. It is not included in the connector bundle.
 - **Item Content** uses either Reader's compact summary or its parsed article HTML.
 - **Open Items In** opens either the Reader document or its original website.
 - **Import Only Unseen** filters out documents already opened in Reader at import time.
-- **Required Tags** filters by up to five comma-separated Reader tags. All tags must match.
+- **Tag Filter** defaults to `All` (no filtering). Enter up to five
+  comma-separated Reader tags to require all of them.
 - **Metadata Detail** adds reading progress and word count in Rich mode.
 - **Show Reader Tags** and **Show Reader Notes** control their timeline display.
 - **Enable Reader Actions** adds seen/unseen and Inbox/Later/Archive actions.

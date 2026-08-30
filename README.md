@@ -23,7 +23,7 @@ bundle.
 - Original-site author icons, cached by domain with tiny-icon filtering
 - Optional unseen-only initial import
 - Native source cards with title, summary, author, site, and cover image
-- Required-tag filtering (up to five Reader tags, combined with AND semantics)
+- Optional tag filtering (defaults to All; up to five tags with AND semantics)
 - Optional Reader tag and note display
 - Reading progress and word-count annotations
 - Optional actions to mark documents seen/unseen or move them to Inbox, Later,

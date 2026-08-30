@@ -43,8 +43,9 @@
     {
       "name": "required_tags",
       "type": "text",
-      "prompt": "Required Tags (comma-separated, max 5)",
-      "placeholder": "research, ai"
+      "prompt": "Tag Filter (All or comma-separated, max 5)",
+      "placeholder": "All or research, ai",
+      "value": "All"
     },
     {
       "name": "metadata_detail",

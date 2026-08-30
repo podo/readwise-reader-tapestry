@@ -55,7 +55,7 @@ function makeContext(overrides = {}) {
     content_detail: "Summary",
     open_target: "Reader",
     only_unseen: "off",
-    required_tags: "",
+    required_tags: "All",
     metadata_detail: "Rich",
     show_tags: "on",
     show_notes: "off",
@@ -130,6 +130,7 @@ async function run() {
     "https://example.com/apple-touch-icon-180x180.png"
   );
   assert.strictEqual(context.iconLookupCount, 1);
+  assert.doesNotMatch(context.lastRequest.url, /[?&]tag=/, "All must not add a tag filter");
 
   vm.runInContext("load()", context);
   await settle();
