@@ -43,8 +43,8 @@
     {
       "name": "required_tags",
       "type": "text",
-      "prompt": "Tag Filter (All or comma-separated, max 5)",
-      "placeholder": "All or research, ai",
+      "prompt": "Tag Filter (All, Untagged, or max 5 tags)",
+      "placeholder": "All, Untagged, or research, ai",
       "value": "All"
     },
     {

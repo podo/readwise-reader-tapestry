@@ -25,6 +25,7 @@ function makeContext(overrides = {}) {
         location: "feed",
         site_name: "Example",
         reading_time: "4 mins",
+        listening_time: null,
         reading_progress: 0.42,
         word_count: 1234,
         tags: { research: "Research", ai: "AI" },
@@ -67,6 +68,23 @@ function makeContext(overrides = {}) {
       context._requests.push(context.lastRequest);
       if (url === "https://readwise.io/api/v2/auth/") {
         return JSON.stringify({ status: 204, headers: {}, body: "" });
+      }
+      if (url.startsWith("https://readwise.io/api/v3/tags/")) {
+        const tags = {
+          count: 5,
+          nextPageCursor: null,
+          results: [
+            { key: "research", name: "Research" },
+            { key: "ai-key", name: "AI" },
+            { key: "later", name: "Later" },
+            { key: "deep", name: "Deep" },
+            { key: "fifth", name: "Fifth" }
+          ]
+        };
+        return JSON.stringify({ status: 200, headers: {}, body: JSON.stringify(tags) });
+      }
+      if (/^https:\/\/www\.reddit\.com\/user\//.test(url)) {
+        return JSON.stringify({ data: { snoovatar_img: "https://styles.redditmedia.com/profile/avatar.png?x=1&amp;y=2" } });
       }
       if (method === "PATCH") {
         const changes = JSON.parse(parameters);
@@ -182,16 +200,71 @@ async function run() {
   );
 
   const richContext = makeContext({
-    required_tags: "research, ai, later, deep, fifth, ignored",
+    required_tags: "Research, AI, later, deep, fifth, ignored",
     show_notes: "on"
   });
   vm.runInContext("load()", richContext);
   await settle();
   assert.match(richContext.lastRequest.url, /tag=research/);
-  assert.match(richContext.lastRequest.url, /tag=ai/);
+  assert.match(richContext.lastRequest.url, /tag=ai-key/);
   assert.doesNotMatch(richContext.lastRequest.url, /ignored/);
   assert.match(richContext.results[0].body, /Reader note:/);
   assert.match(richContext.results[0].body, /&lt;this&gt; &amp; revisit/);
+
+  const untaggedContext = makeContext({ required_tags: "Untagged" });
+  vm.runInContext("load()", untaggedContext);
+  await settle();
+  assert.match(untaggedContext.lastRequest.url, /[?&]tag=(?:&|$)/);
+
+  const unknownTagContext = makeContext({ required_tags: "Does Not Exist" });
+  vm.runInContext("verify()", unknownTagContext);
+  await settle();
+  assert.match(unknownTagContext.error.message, /tag not found/i);
+
+  const nestedTags = vm.runInContext(
+    `documentTagNames({ research: { name: "Research", type: "manual" }, ai: "AI" })`,
+    context
+  );
+  assert.deepStrictEqual(Array.from(nestedTags), ["Research", "AI"]);
+
+  const videoAnnotation = vm.runInContext(
+    `documentAnnotations({ category: "video", location: "feed", listening_time: "12 mins", reading_time: "4 mins", tags: {} })[0].text`,
+    context
+  );
+  assert.match(videoAnnotation, /12 mins/);
+  assert.doesNotMatch(videoAnnotation, /4 mins/);
+
+  const redditContext = makeContext({
+    reader_location: "All Locations"
+  });
+  redditContext.reader_location = "All Locations";
+  vm.runInContext(
+    `reader_location = "All Locations";`,
+    redditContext
+  );
+  const redditDocument = {
+    id: "reddit-doc",
+    url: "https://read.readwise.io/feed/read/reddit-doc",
+    source_url: "https://www.reddit.com/r/apple/comments/abc/a_post/",
+    title: "A Reddit post",
+    author: "u/example_user",
+    category: "article",
+    location: "feed",
+    site_name: "Reddit",
+    summary: "A post",
+    parent_id: null,
+    saved_at: "2026-08-29T10:00:00Z"
+  };
+  const redditIcons = await vm.runInContext(`resolveSiteIcons([${JSON.stringify(redditDocument)}])`, redditContext);
+  const redditItem = vm.runInContext(
+    `documentToItem(${JSON.stringify(redditDocument)}, ${JSON.stringify(redditIcons)})`,
+    redditContext
+  );
+  assert.strictEqual(
+    redditItem.author.avatar,
+    "https://styles.redditmedia.com/profile/avatar.png?x=1&y=2"
+  );
+  assert.strictEqual(redditContext.iconLookupCount, undefined);
 
   const actionsContext = makeContext({ enable_reader_actions: "on" });
   vm.runInContext("load()", actionsContext);

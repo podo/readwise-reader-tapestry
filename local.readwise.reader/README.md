@@ -19,17 +19,20 @@ header. It is not included in the connector bundle.
 - **Item Content** uses either Reader's compact summary or its parsed article HTML.
 - **Open Items In** opens either the Reader document or its original website.
 - **Import Only Unseen** filters out documents already opened in Reader at import time.
-- **Tag Filter** defaults to `All` (no filtering). Enter up to five
-  comma-separated Reader tags to require all of them.
+- **Tag Filter** defaults to `All` (no filtering). Use `Untagged`, or enter up
+  to five comma-separated Reader tag keys or display names to require all of them.
 - **Metadata Detail** adds reading progress and word count in Rich mode.
 - **Show Reader Tags** and **Show Reader Notes** control their timeline display.
 - **Enable Reader Actions** adds seen/unseen and Inbox/Later/Archive/Feed actions.
 - **Initial Item Limit** controls the first import. Later refreshes are incremental.
 
 Tapestry uses each document's original-site icon as its author avatar when a
-suitable icon is available. Icons are cached by site, and URLs that explicitly
-advertise a tiny 16–48 pixel raster are ignored to avoid visibly soft avatars.
-The cache refreshes icons after 30 days.
+suitable icon is available. Avatars are cached by site or Reddit identity, and
+URLs that explicitly advertise a tiny 16–48 pixel raster are ignored to avoid
+visibly soft avatars. The cache refreshes icons after 30 days.
+
+For Reddit documents, the connector prefers the post author's profile avatar,
+then the subreddit icon, before falling back to Reddit's site icon.
 
 Incremental synchronization retains Reader's pagination cursor when a large
 update cannot be completed in one refresh. Changing a feed filter starts a new

@@ -3,13 +3,18 @@
 const apiBase = "https://readwise.io/api/v3/list/";
 const updateApiBase = "https://readwise.io/api/v3/update/";
 const authApiUrl = "https://readwise.io/api/v2/auth/";
+const tagApiBase = "https://readwise.io/api/v3/tags/";
 const syncStateKey = "syncStateV2";
 const overlapMilliseconds = 5 * 60 * 1000;
 const maximumIncrementalPages = 5;
-const siteIconCacheKey = "siteIconCacheV1";
+const siteIconCacheKey = "documentAvatarCacheV2";
 const siteIconCacheLimit = 200;
 const siteIconLookupConcurrency = 4;
 const siteIconCacheTtlMilliseconds = 30 * 24 * 60 * 60 * 1000;
+const tagCacheKey = "readerTagCacheV1";
+const tagCacheTtlMilliseconds = 24 * 60 * 60 * 1000;
+const maximumTagPages = 5;
+const maximumCachedTags = 500;
 
 function verify() {
   verifyAsync().then(processVerification).catch(processError);
@@ -28,6 +33,7 @@ function performAction(actionId, actionValue, item) {
 async function verifyAsync() {
   validateToken();
   await readerApiRequest(authApiUrl, "GET", null);
+  await resolvedRequiredTagKeys();
 
   return {
     displayName: `Reader · ${normalizedLocationLabel()}`,
@@ -49,13 +55,14 @@ async function loadAsync() {
   const windowStartedAt = syncState.windowStartedAt || requestStartedAt.toISOString();
   const limit = normalizedBatchSize();
   const includeFullContent = normalizedChoice(content_detail) === "full article";
+  const requiredTagKeys = await resolvedRequiredTagKeys();
   const documents = [];
 
   let pageCursor = syncState.pageCursor || null;
   let pageCount = 0;
 
   do {
-    const query = buildQuery(syncState.updatedAfter, limit, includeFullContent, pageCursor);
+    const query = buildQuery(syncState.updatedAfter, limit, includeFullContent, pageCursor, requiredTagKeys);
     const response = await readerRequest(`${apiBase}?${query}`);
     const page = parseDocumentResponse(response);
 
@@ -235,7 +242,7 @@ function headerValue(headers, name) {
   return key ? String(headers[key]) : null;
 }
 
-function buildQuery(updatedAfter, limit, includeFullContent, pageCursor) {
+function buildQuery(updatedAfter, limit, includeFullContent, pageCursor, requiredTagKeys) {
   const pairs = [
     ["limit", String(limit)],
     ["withHtmlContent", includeFullContent ? "true" : "false"]
@@ -245,7 +252,7 @@ function buildQuery(updatedAfter, limit, includeFullContent, pageCursor) {
   if (location) pairs.push(["location", location]);
   const category = normalizedCategory();
   if (category) pairs.push(["category", category]);
-  for (const tag of normalizedRequiredTags()) pairs.push(["tag", tag]);
+  for (const tag of requiredTagKeys || []) pairs.push(["tag", tag]);
   if (updatedAfter) pairs.push(["updatedAfter", updatedAfter]);
   if (pageCursor) pairs.push(["pageCursor", pageCursor]);
 
@@ -278,7 +285,7 @@ function documentToItem(document, siteIcons) {
   const identityName = document.site_name || document.author || "Readwise Reader";
   const identity = Identity.createWithName(identityName);
   identity.uri = originalUrl;
-  const siteOrigin = normalizedWebOrigin(document.source_url);
+  const siteOrigin = documentAvatarCacheKey(document);
   const siteIcon = siteOrigin && siteIcons ? siteIcons[siteOrigin] : null;
   if (siteIcon) identity.avatar = siteIcon;
   if (document.author && document.author !== identityName) {
@@ -306,9 +313,9 @@ async function resolveSiteIcons(documents) {
   const pagesByOrigin = {};
 
   for (const document of documents) {
-    const origin = normalizedWebOrigin(document.source_url);
+    const origin = documentAvatarCacheKey(document);
     if (origin && !isCurrentSiteIconEntry(cache[origin])) {
-      pagesByOrigin[origin] = document.source_url;
+      pagesByOrigin[origin] = document;
     }
   }
 
@@ -319,11 +326,11 @@ async function resolveSiteIcons(documents) {
   for (let index = 0; index < workerCount; index += 1) {
     workers.push((async () => {
       while (queue.length > 0) {
-        const [origin, pageUrl] = queue.shift();
+        const [origin, document] = queue.shift();
         let icon = null;
 
         try {
-          const candidate = await lookupIcon(pageUrl);
+          const candidate = await lookupDocumentAvatar(document);
           if (isAcceptableSiteIcon(candidate)) icon = candidate;
         }
         catch (error) {
@@ -346,6 +353,66 @@ async function resolveSiteIcons(documents) {
     if (isCurrentSiteIconEntry(entry) && entry.url) icons[origin] = entry.url;
   }
   return icons;
+}
+
+function documentAvatarCacheKey(document) {
+  const reddit = redditDocumentContext(document);
+  if (reddit && reddit.author) return `reddit:user:${reddit.author.toLowerCase()}`;
+  if (reddit && reddit.subreddit) return `reddit:subreddit:${reddit.subreddit.toLowerCase()}`;
+  return normalizedWebOrigin(document && document.source_url);
+}
+
+async function lookupDocumentAvatar(document) {
+  const reddit = redditDocumentContext(document);
+  if (reddit) {
+    if (reddit.author) {
+      const profile = await redditAbout(`https://www.reddit.com/user/${encodeURIComponent(reddit.author)}/about.json?raw_json=1`);
+      const profileIcon = profile && (profile.snoovatar_img || profile.icon_img);
+      if (profileIcon) return decodeHtmlUrl(profileIcon);
+    }
+    if (reddit.subreddit) {
+      const community = await redditAbout(`https://www.reddit.com/r/${encodeURIComponent(reddit.subreddit)}/about.json?raw_json=1`);
+      const communityIcon = community && (community.community_icon || community.icon_img);
+      if (communityIcon) return decodeHtmlUrl(communityIcon);
+    }
+  }
+  return lookupIcon(document.source_url);
+}
+
+async function redditAbout(url) {
+  try {
+    const text = await sendRequest(url, "GET", null, {
+      "User-Agent": "Tapestry Readwise Reader connector"
+    });
+    const parsed = JSON.parse(text);
+    return parsed && parsed.data ? parsed.data : null;
+  }
+  catch (error) {
+    return null;
+  }
+}
+
+function redditDocumentContext(document) {
+  if (!document || !document.source_url) return null;
+  try {
+    const url = new URL(document.source_url);
+    if (!/(^|\.)reddit\.com$/i.test(url.hostname)) return null;
+    const subredditMatch = url.pathname.match(/^\/r\/([^/]+)/i);
+    let author = typeof document.author === "string" ? document.author.trim() : "";
+    author = author.replace(/^u\//i, "").replace(/^@/, "");
+    if (!author || author === "[deleted]" || /\s/.test(author)) author = null;
+    return {
+      author,
+      subreddit: subredditMatch ? decodeURIComponent(subredditMatch[1]) : null
+    };
+  }
+  catch (error) {
+    return null;
+  }
+}
+
+function decodeHtmlUrl(value) {
+  return String(value).replace(/&amp;/g, "&");
 }
 
 function isCurrentSiteIconEntry(entry) {
@@ -452,7 +519,9 @@ function documentAnnotations(document) {
 
   if (document.category) details.push(displayCategory(document.category));
   if (!normalizedLocation() && document.location) details.push(displayLocation(document.location));
-  if (document.reading_time) details.push(document.reading_time);
+  if (document.category === "video" && document.listening_time) details.push(document.listening_time);
+  else if (document.reading_time) details.push(document.reading_time);
+  else if (document.listening_time) details.push(document.listening_time);
   if (normalizedChoice(metadata_detail) === "rich") {
     const progress = formattedProgress(document.reading_progress);
     if (progress) details.push(progress);
@@ -486,7 +555,13 @@ function documentTagNames(tags) {
     return tags.map(tag => typeof tag === "string" ? tag : tag && (tag.name || tag.key))
       .filter(Boolean);
   }
-  if (tags && typeof tags === "object") return Object.values(tags).filter(Boolean).map(String);
+  if (tags && typeof tags === "object") {
+    return Object.entries(tags).map(([key, value]) => {
+      if (typeof value === "string") return value;
+      if (value && typeof value === "object") return value.name || key;
+      return key;
+    }).filter(Boolean);
+  }
   return [];
 }
 
@@ -620,6 +695,106 @@ function normalizedRequiredTags() {
   const value = required_tags.trim();
   if (!value || normalizedChoice(value) === "all") return [];
   return value.split(",").map(tag => tag.trim()).filter(Boolean).slice(0, 5);
+}
+
+async function resolvedRequiredTagKeys() {
+  const requested = normalizedRequiredTags();
+  if (requested.length === 0) return [];
+
+  const untagged = requested.filter(value => normalizedChoice(value) === "untagged");
+  if (untagged.length > 0) {
+    if (requested.length !== 1) throw new Error("Untagged cannot be combined with other tag filters.");
+    return [""];
+  }
+
+  let catalog = await readerTagCatalog(false);
+  let resolved = resolveTagInputs(requested, catalog.tags);
+  if (resolved.missing.length > 0 && catalog.fromCache) {
+    catalog = await readerTagCatalog(true);
+    resolved = resolveTagInputs(requested, catalog.tags);
+  }
+
+  if (resolved.ambiguous.length > 0) {
+    throw new Error(`Reader tag name is ambiguous: ${resolved.ambiguous.join(", ")}. Enter its tag key instead.`);
+  }
+  if (resolved.missing.length > 0) {
+    const suffix = catalog.complete ? "" : " within the first five Reader tag pages";
+    throw new Error(`Reader tag not found${suffix}: ${resolved.missing.join(", ")}.`);
+  }
+  return resolved.keys;
+}
+
+function resolveTagInputs(requested, tags) {
+  const keys = [];
+  const missing = [];
+  const ambiguous = [];
+
+  for (const input of requested) {
+    const normalized = normalizedChoice(input);
+    const keyMatches = tags.filter(tag => normalizedChoice(tag.key) === normalized);
+    if (keyMatches.length === 1) {
+      keys.push(keyMatches[0].key);
+      continue;
+    }
+
+    const nameMatches = tags.filter(tag => normalizedChoice(tag.name) === normalized);
+    if (nameMatches.length === 1) keys.push(nameMatches[0].key);
+    else if (nameMatches.length > 1) ambiguous.push(input);
+    else missing.push(input);
+  }
+
+  return { keys, missing, ambiguous };
+}
+
+async function readerTagCatalog(forceRefresh) {
+  if (!forceRefresh) {
+    const cached = readTagCache();
+    if (cached) return { tags: cached.tags, complete: cached.complete, fromCache: true };
+  }
+
+  const tags = [];
+  let cursor = null;
+  let pageCount = 0;
+  do {
+    const url = cursor
+      ? `${tagApiBase}?pageCursor=${encodeURIComponent(cursor)}`
+      : tagApiBase;
+    const response = await readerRequest(url);
+    const page = JSON.parse(response);
+    if (!page || !Array.isArray(page.results)) throw new Error("Reader returned an unexpected tag response.");
+    for (const tag of page.results) {
+      if (tag && tag.key) tags.push({ key: String(tag.key), name: String(tag.name || tag.key) });
+    }
+    cursor = page.nextPageCursor || null;
+    pageCount += 1;
+  } while (cursor && pageCount < maximumTagPages);
+
+  writeTagCache(tags, !cursor);
+  return { tags, complete: !cursor, fromCache: false };
+}
+
+function readTagCache() {
+  const stored = getItem(tagCacheKey);
+  if (!stored) return null;
+  try {
+    const parsed = JSON.parse(stored);
+    const fetchedAt = new Date(parsed.fetchedAt);
+    if (!Array.isArray(parsed.tags) || Number.isNaN(fetchedAt.getTime())) return null;
+    if (Date.now() - fetchedAt.getTime() >= tagCacheTtlMilliseconds) return null;
+    return parsed;
+  }
+  catch (error) {
+    return null;
+  }
+}
+
+function writeTagCache(tags, complete) {
+  const compact = {
+    fetchedAt: new Date().toISOString(),
+    complete: Boolean(complete),
+    tags: tags.slice(0, maximumCachedTags)
+  };
+  setItem(tagCacheKey, JSON.stringify(compact));
 }
 
 function normalizedChoice(value) {

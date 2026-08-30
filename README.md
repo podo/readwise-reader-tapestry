@@ -23,9 +23,11 @@ bundle.
 - Original-site author icons, cached by domain with tiny-icon filtering
 - Optional unseen-only initial import
 - Native source cards with title, summary, author, site, and cover image
-- Optional tag filtering (defaults to All; up to five tags with AND semantics)
+- Optional tag filtering by key or display name, plus an Untagged mode
 - Optional Reader tag and note display
 - Reading progress and word-count annotations
+- Listening-time metadata for video and audio-oriented documents
+- Reddit author avatars with subreddit and site-icon fallbacks
 - Optional actions to mark documents seen/unseen or move them to Inbox, Later,
   Archive, or Feed
 - Dedicated token verification and post-action state refresh
@@ -48,6 +50,10 @@ Tapestry does not expose a connector API for retracting an existing timeline
 item. If a document is moved outside a location-specific feed, its older
 timeline entry may remain visible. Use **All Locations** to keep receiving that
 document's updated state after moves.
+
+Tag names are resolved through Reader's Tag List API and cached for 24 hours.
+The existing tag setting remains a text field because Tapestry connector
+configuration does not support dynamic tag pickers.
 
 ## Development and tests
 
