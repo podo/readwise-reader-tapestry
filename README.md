@@ -27,7 +27,8 @@ bundle.
 - Optional Reader tag and note display
 - Reading progress and word-count annotations
 - Optional actions to mark documents seen/unseen or move them to Inbox, Later,
-  or Archive
+  Archive, or Feed
+- Dedicated token verification and post-action state refresh
 - Incremental synchronization after the initial 25, 50, or 100-item import
 - Lossless incremental pagination with configuration-aware checkpoints
 

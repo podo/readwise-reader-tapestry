@@ -24,6 +24,11 @@
       "id": "move_inbox",
       "name": "Move to Inbox",
       "icon": "tray.fill"
+    },
+    {
+      "id": "move_feed",
+      "name": "Move to Feed",
+      "icon": "dot.radiowaves.left.and.right"
     }
   ]
 }

@@ -61,9 +61,26 @@ function makeContext(overrides = {}) {
     show_notes: "off",
     enable_reader_actions: "off",
     batch_size: "50",
+    _requests: [],
     sendRequest: async (url, method, parameters, headers) => {
       context.lastRequest = { url, method, parameters, headers };
-      return JSON.stringify(sample);
+      context._requests.push(context.lastRequest);
+      if (url === "https://readwise.io/api/v2/auth/") {
+        return JSON.stringify({ status: 204, headers: {}, body: "" });
+      }
+      if (method === "PATCH") {
+        const changes = JSON.parse(parameters);
+        Object.assign(sample.results[0], changes);
+        if (Object.prototype.hasOwnProperty.call(changes, "seen")) {
+          sample.results[0].first_opened_at = changes.seen ? "2026-08-30T08:00:00Z" : null;
+        }
+        return JSON.stringify({
+          status: 200,
+          headers: {},
+          body: JSON.stringify({ id: sample.results[0].id, url: sample.results[0].url })
+        });
+      }
+      return JSON.stringify({ status: 200, headers: {}, body: JSON.stringify(sample) });
     },
     processVerification: value => { context.verification = value; },
     processResults: value => { context.results = value; },
@@ -108,6 +125,7 @@ async function run() {
   await settle();
   assert.ifError(context.error);
   assert.strictEqual(context.verification.displayName, "Reader · Feed");
+  assert.strictEqual(context.lastRequest.url, "https://readwise.io/api/v2/auth/");
   assert.strictEqual(context.lastRequest.headers.Authorization, "Token reader-token");
 
   vm.runInContext("load()", context);
@@ -177,12 +195,24 @@ async function run() {
   );
   await settle();
   assert.ifError(actionsContext.actionError);
-  assert.strictEqual(actionsContext.lastRequest.method, "PATCH");
-  assert.match(actionsContext.lastRequest.url, /\/api\/v3\/update\/doc-1\/$/);
-  assert.deepStrictEqual(JSON.parse(actionsContext.lastRequest.parameters), { seen: true });
+  const patchRequest = actionsContext._requests.find(request => request.method === "PATCH");
+  assert.match(patchRequest.url, /\/api\/v3\/update\/doc-1\/$/);
+  assert.deepStrictEqual(JSON.parse(patchRequest.parameters), { seen: true });
+  assert.match(actionsContext.lastRequest.url, /[?&]id=doc-1/);
   assert.ok(actionsContext.actionResult.actions.mark_unseen);
   assert.ok(!actionsContext.actionResult.actions.mark_seen);
   assert.doesNotMatch(actionsContext.actionResult.annotations[0].text, /Unseen in Reader/);
+
+  vm.runInContext(
+    `performAction("move_feed", ${JSON.stringify(JSON.stringify({ id: "doc-1", location: "later", seen: true }))}, actionResult)`,
+    actionsContext
+  );
+  await settle();
+  assert.ifError(actionsContext.actionError);
+  const latestPatch = actionsContext._requests.filter(request => request.method === "PATCH").pop();
+  assert.deepStrictEqual(JSON.parse(latestPatch.parameters), { location: "feed" });
+  assert.ok(!actionsContext.actionResult.actions.move_feed);
+  assert.ok(actionsContext.actionResult.actions.move_later);
 
   const pageCalls = [];
   const paginationContext = makeContext({
@@ -242,6 +272,21 @@ async function run() {
   await settle();
   assert.match(rateLimitContext.error.message, /30 seconds/);
   assert.strictEqual(rateLimitContext._state.get("syncStateV2"), undefined);
+
+  const badRequestContext = makeContext({
+    enable_reader_actions: "on",
+    sendRequest: async () => JSON.stringify({
+      status: 400,
+      headers: {},
+      body: JSON.stringify({ detail: "Unsupported location." })
+    })
+  });
+  vm.runInContext(
+    `performAction("move_feed", ${JSON.stringify(JSON.stringify({ id: "doc-1", location: "later", seen: false }))}, {})`,
+    badRequestContext
+  );
+  await settle();
+  assert.match(badRequestContext.actionError.message, /Unsupported location/);
 
   const missingToken = makeContext({ api_token: "" });
   vm.runInContext("verify()", missingToken);

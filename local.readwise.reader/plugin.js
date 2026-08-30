@@ -2,6 +2,7 @@
 
 const apiBase = "https://readwise.io/api/v3/list/";
 const updateApiBase = "https://readwise.io/api/v3/update/";
+const authApiUrl = "https://readwise.io/api/v2/auth/";
 const syncStateKey = "syncStateV2";
 const overlapMilliseconds = 5 * 60 * 1000;
 const maximumIncrementalPages = 5;
@@ -26,10 +27,7 @@ function performAction(actionId, actionValue, item) {
 
 async function verifyAsync() {
   validateToken();
-
-  const query = buildQuery(null, 1, false);
-  const response = await readerRequest(`${apiBase}?${query}`);
-  parseDocumentResponse(response);
+  await readerApiRequest(authApiUrl, "GET", null);
 
   return {
     displayName: `Reader · ${normalizedLocationLabel()}`,
@@ -98,13 +96,20 @@ async function loadAsync() {
 }
 
 async function readerRequest(url) {
+  const response = await readerApiRequest(url, "GET", null);
+  return response.body;
+}
+
+async function readerApiRequest(url, method, parameters) {
   const headers = {
     "Authorization": `Token ${api_token.trim()}`,
     "Accept": "application/json"
   };
+  if (parameters != null) headers["Content-Type"] = "application/json";
+
   let text;
   try {
-    text = await sendRequest(url, "GET", null, headers, true);
+    text = await sendRequest(url, method, parameters, headers, true);
   }
   catch (error) {
     throw normalizedReaderError(error);
@@ -113,47 +118,40 @@ async function readerRequest(url) {
   try {
     const response = JSON.parse(text);
     if (response && typeof response.status === "number" && Object.prototype.hasOwnProperty.call(response, "body")) {
-      if (response.status >= 400) throw readerStatusError(response.status, response.headers);
-      return typeof response.body === "string" ? response.body : JSON.stringify(response.body);
+      if (response.status >= 400) throw readerStatusError(response.status, response.headers, response.body);
+      return {
+        status: response.status,
+        headers: response.headers || {},
+        body: typeof response.body === "string" ? response.body : JSON.stringify(response.body)
+      };
     }
   }
   catch (error) {
     if (error && error.readerApiError) throw error;
   }
 
-  return text;
+  return { status: 200, headers: {}, body: text };
 }
 
 async function readerUpdate(documentId, changes) {
-  const headers = {
-    "Authorization": `Token ${api_token.trim()}`,
-    "Accept": "application/json",
-    "Content-Type": "application/json"
-  };
+  return readerApiRequest(
+    `${updateApiBase}${encodeURIComponent(documentId)}/`,
+    "PATCH",
+    JSON.stringify(changes)
+  );
+}
 
-  let text;
-  try {
-    text = await sendRequest(
-      `${updateApiBase}${encodeURIComponent(documentId)}/`,
-      "PATCH",
-      JSON.stringify(changes),
-      headers,
-      true
-    );
-  }
-  catch (error) {
-    throw normalizedReaderError(error);
-  }
-
-  try {
-    const response = JSON.parse(text);
-    if (response && typeof response.status === "number" && Object.prototype.hasOwnProperty.call(response, "body")) {
-      if (response.status >= 400) throw readerStatusError(response.status, response.headers);
-    }
-  }
-  catch (error) {
-    if (error && error.readerApiError) throw error;
-  }
+async function readerDocumentById(documentId) {
+  const pairs = [
+    ["id", documentId],
+    ["withHtmlContent", normalizedChoice(content_detail) === "full article" ? "true" : "false"]
+  ];
+  const query = pairs.map(pair => `${encodeURIComponent(pair[0])}=${encodeURIComponent(pair[1])}`).join("&");
+  const response = await readerRequest(`${apiBase}?${query}`);
+  const page = parseDocumentResponse(response);
+  const document = page.results.find(result => result && result.id === documentId);
+  if (!document) throw new Error("Reader did not return the updated document.");
+  return document;
 }
 
 async function performReaderAction(actionId, actionValue, item) {
@@ -173,11 +171,10 @@ async function performReaderAction(actionId, actionValue, item) {
   const changes = actionChanges(actionId);
   if (!changes) throw new Error(`Unknown Reader action: ${actionId}`);
   await readerUpdate(state.id, changes);
+  const document = await readerDocumentById(state.id);
 
-  if (Object.prototype.hasOwnProperty.call(changes, "seen")) state.seen = changes.seen;
-  if (changes.location) state.location = changes.location;
-  item.actions = readerActions(state.id, state.location, state.seen);
-  updateSeenAnnotation(item, state.seen);
+  item.annotations = documentAnnotations(document);
+  item.actions = readerActions(document.id, document.location, documentSeen(document));
   return item;
 }
 
@@ -187,10 +184,11 @@ function actionChanges(actionId) {
   if (actionId === "move_later") return { location: "later" };
   if (actionId === "move_archive") return { location: "archive" };
   if (actionId === "move_inbox") return { location: "new" };
+  if (actionId === "move_feed") return { location: "feed" };
   return null;
 }
 
-function readerStatusError(status, headers) {
+function readerStatusError(status, headers, body) {
   let message = `Reader returned HTTP ${status}.`;
   if (status === 401 || status === 403) {
     message = "Reader rejected the API token. Create a fresh token at readwise.io/access_token.";
@@ -201,10 +199,27 @@ function readerStatusError(status, headers) {
       ? `Reader rate limit reached. Try again in ${retryAfter} seconds.`
       : "Reader rate limit reached. Try again shortly.";
   }
+  else {
+    const detail = readerErrorDetail(body);
+    if (detail) message += ` ${detail}`;
+  }
 
   const error = new Error(message);
   error.readerApiError = true;
   return error;
+}
+
+function readerErrorDetail(body) {
+  if (body == null) return null;
+  if (typeof body === "object") return body.detail || body.error || body.message || null;
+  if (typeof body !== "string" || !body.trim()) return null;
+  try {
+    const parsed = JSON.parse(body);
+    return parsed.detail || parsed.error || parsed.message || null;
+  }
+  catch (error) {
+    return body.length <= 200 ? body : null;
+  }
 }
 
 function normalizedReaderError(error) {
@@ -453,20 +468,8 @@ function readerActions(id, location, seen) {
   if (location !== "later") actions.move_later = value;
   if (location !== "archive") actions.move_archive = value;
   if (location !== "new") actions.move_inbox = value;
+  if (location !== "feed") actions.move_feed = value;
   return actions;
-}
-
-function updateSeenAnnotation(item, seen) {
-  const annotations = Array.isArray(item.annotations) ? item.annotations.slice() : [];
-  if (annotations.length === 0) {
-    if (!seen) annotations.push(Annotation.createWithText("Unseen in Reader"));
-  }
-  else if (annotations[0] && typeof annotations[0].text === "string") {
-    const parts = annotations[0].text.split(" · ").filter(part => part !== "Unseen in Reader");
-    if (!seen) parts.push("Unseen in Reader");
-    annotations[0].text = parts.join(" · ");
-  }
-  item.annotations = annotations.length > 0 ? annotations : undefined;
 }
 
 function documentTagNames(tags) {

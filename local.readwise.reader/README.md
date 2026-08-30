@@ -23,7 +23,7 @@ header. It is not included in the connector bundle.
   comma-separated Reader tags to require all of them.
 - **Metadata Detail** adds reading progress and word count in Rich mode.
 - **Show Reader Tags** and **Show Reader Notes** control their timeline display.
-- **Enable Reader Actions** adds seen/unseen and Inbox/Later/Archive actions.
+- **Enable Reader Actions** adds seen/unseen and Inbox/Later/Archive/Feed actions.
 - **Initial Item Limit** controls the first import. Later refreshes are incremental.
 
 Tapestry uses each document's original-site icon as its author avatar when a
@@ -39,6 +39,9 @@ timestamp.
 Reader actions are disabled by default. When enabled, only selecting an explicit
 action sends a document update to Reader; merely viewing an item in Tapestry
 does not change it.
+
+After an action, the connector retrieves the document again so its actions and
+seen state reflect the location Reader actually selected.
 
 Reader's document API is limited to 20 requests per minute. This connector uses
 at most five pages during one incremental refresh and includes a small overlap
