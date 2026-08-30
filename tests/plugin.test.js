@@ -133,7 +133,7 @@ async function run() {
   assert.ifError(context.error);
   assert.strictEqual(context.results.length, 1);
   assert.strictEqual(context.results[0].title, "A useful article");
-  assert.strictEqual(context.results[0].uri, "https://read.readwise.io/feed/read/doc-1");
+  assert.strictEqual(context.results[0].uri, "https://read.readwise.io/read/doc-1");
   assert.strictEqual(context.results[0].date.toISOString(), "2026-08-28T08:00:00.000Z");
   assert.match(context.results[0].body, /&lt;unsafe&gt;/);
   assert.doesNotMatch(context.results[0].body, /<unsafe>/);
@@ -170,6 +170,16 @@ async function run() {
   vm.runInContext("load()", tinyIconContext);
   await settle();
   assert.strictEqual(tinyIconContext.results[0].author.avatar, undefined);
+
+  const allLocationsContext = makeContext({ reader_location: "All Locations" });
+  vm.runInContext("load()", allLocationsContext);
+  await settle();
+  assert.doesNotMatch(allLocationsContext.lastRequest.url, /[?&]location=/);
+  assert.match(allLocationsContext.results[0].annotations[0].text, /Feed/);
+  assert.strictEqual(
+    allLocationsContext.results[0].date.toISOString(),
+    "2026-08-28T08:00:00.000Z"
+  );
 
   const richContext = makeContext({
     required_tags: "research, ai, later, deep, fifth, ignored",

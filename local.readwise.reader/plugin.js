@@ -237,11 +237,12 @@ function headerValue(headers, name) {
 
 function buildQuery(updatedAfter, limit, includeFullContent, pageCursor) {
   const pairs = [
-    ["location", normalizedLocation()],
     ["limit", String(limit)],
     ["withHtmlContent", includeFullContent ? "true" : "false"]
   ];
 
+  const location = normalizedLocation();
+  if (location) pairs.push(["location", location]);
   const category = normalizedCategory();
   if (category) pairs.push(["category", category]);
   for (const tag of normalizedRequiredTags()) pairs.push(["tag", tag]);
@@ -262,7 +263,7 @@ function parseDocumentResponse(text) {
 }
 
 function documentToItem(document, siteIcons) {
-  const readerUrl = document.url || `https://read.readwise.io/read/${encodeURIComponent(document.id)}`;
+  const readerUrl = stableReaderDocumentUrl(document);
   const originalUrl = document.source_url || readerUrl;
   const openOriginal = normalizedChoice(open_target) === "original website";
   const uri = openOriginal ? originalUrl : readerUrl;
@@ -291,6 +292,13 @@ function documentToItem(document, siteIcons) {
   }
 
   return item;
+}
+
+function stableReaderDocumentUrl(document) {
+  if (document && document.id) {
+    return `https://read.readwise.io/read/${encodeURIComponent(document.id)}`;
+  }
+  return document && document.url ? document.url : "https://read.readwise.io";
 }
 
 async function resolveSiteIcons(documents) {
@@ -443,6 +451,7 @@ function documentAnnotations(document) {
   const details = [];
 
   if (document.category) details.push(displayCategory(document.category));
+  if (!normalizedLocation() && document.location) details.push(displayLocation(document.location));
   if (document.reading_time) details.push(document.reading_time);
   if (normalizedChoice(metadata_detail) === "rich") {
     const progress = formattedProgress(document.reading_progress);
@@ -501,7 +510,7 @@ function linkTypeForCategory(category) {
 }
 
 function documentDate(document) {
-  const candidates = normalizedLocation() === "feed"
+  const candidates = document.location === "feed"
     ? [document.published_date, document.created_at, document.saved_at, document.updated_at]
     : [document.saved_at, document.created_at, document.published_date, document.updated_at];
 
@@ -577,6 +586,7 @@ function validateToken() {
 
 function normalizedLocation() {
   const value = normalizedChoice(reader_location);
+  if (value === "all locations") return null;
   if (value === "inbox") return "new";
   if (["feed", "later", "shortlist", "archive"].includes(value)) return value;
   return "feed";
@@ -584,7 +594,15 @@ function normalizedLocation() {
 
 function normalizedLocationLabel() {
   const value = normalizedChoice(reader_location);
+  if (value === "all locations") return "All Locations";
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : "Feed";
+}
+
+function displayLocation(location) {
+  const value = normalizedChoice(location);
+  if (value === "new") return "Inbox";
+  if (!value) return "Unknown location";
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function normalizedCategory() {

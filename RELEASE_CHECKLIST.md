@@ -15,7 +15,8 @@ uses the same processing pipeline as the app.
 - Verify a valid token and confirm invalid/expired tokens show a useful error.
 - Load Summary and Full Article modes.
 - Check Reader and Original Website opening targets.
-- Check Feed, Inbox, Later, Shortlist, and Archive locations.
+- Check All Locations, Feed, Inbox, Later, Shortlist, and Archive locations.
+- Confirm the location-free Reader URL opens the same document after moves.
 - Check tag filter values `All`, a real tag key/name, and `Untagged` when supported.
 - Confirm source LinkAttachment and full-content media do not duplicate.
 - With actions enabled, test seen/unseen and every supported move action.

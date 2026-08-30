@@ -14,7 +14,7 @@ header. It is not included in the connector bundle.
 
 ## Options
 
-- **Reader Location** selects Feed, Inbox, Later, Shortlist, or Archive.
+- **Reader Location** selects All Locations, Feed, Inbox, Later, Shortlist, or Archive.
 - **Content Type** optionally limits the timeline to one Reader category.
 - **Item Content** uses either Reader's compact summary or its parsed article HTML.
 - **Open Items In** opens either the Reader document or its original website.
@@ -42,6 +42,10 @@ does not change it.
 
 After an action, the connector retrieves the document again so its actions and
 seen state reflect the location Reader actually selected.
+
+Tapestry cannot retract an existing timeline item through the connector API.
+Items moved outside a location-specific feed may therefore remain in its older
+timeline history. All Locations continues receiving their updated state.
 
 Reader's document API is limited to 20 requests per minute. This connector uses
 at most five pages during one incremental refresh and includes a small overlap

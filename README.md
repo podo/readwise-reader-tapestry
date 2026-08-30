@@ -16,7 +16,7 @@ bundle.
 
 ## Features
 
-- Reader Feed, Inbox, Later, Shortlist, and Archive locations
+- All Locations, Feed, Inbox, Later, Shortlist, and Archive views
 - Optional Article, Email, RSS, PDF, EPUB, Tweet, or Video filtering
 - Summary or full-article display
 - Open items in Reader or on the original website
@@ -29,6 +29,7 @@ bundle.
 - Optional actions to mark documents seen/unseen or move them to Inbox, Later,
   Archive, or Feed
 - Dedicated token verification and post-action state refresh
+- Stable Reader document URLs derived from document IDs
 - Incremental synchronization after the initial 25, 50, or 100-item import
 - Lossless incremental pagination with configuration-aware checkpoints
 
@@ -42,6 +43,11 @@ Reader actions are disabled by default. Turn on **Enable Reader Actions** for a
 feed to allow Tapestry to change seen state and move that feed's documents
 between Inbox, Later, and Archive. The connector sends only the selected change
 to Reader's document update endpoint.
+
+Tapestry does not expose a connector API for retracting an existing timeline
+item. If a document is moved outside a location-specific feed, its older
+timeline entry may remain visible. Use **All Locations** to keep receiving that
+document's updated state after moves.
 
 ## Development and tests
 

@@ -10,7 +10,7 @@
       "name": "reader_location",
       "type": "choices",
       "prompt": "Reader Location",
-      "choices": "Feed,Inbox,Later,Shortlist,Archive",
+      "choices": "All Locations,Feed,Inbox,Later,Shortlist,Archive",
       "value": "Feed"
     },
     {
