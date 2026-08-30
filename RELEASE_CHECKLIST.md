@@ -22,6 +22,8 @@ uses the same processing pipeline as the app.
 - Confirm a Reddit post shows its author avatar, with subreddit/site fallbacks.
 - With actions enabled, test seen/unseen and every supported move action.
 - Confirm PATCH bodies and headers reach Reader correctly.
+- Confirm each successful action changes its card icon/state immediately without
+  waiting for a follow-up Reader LIST response.
 - Confirm action failures leave the original item unchanged.
 - Confirm moving a document does not create a duplicate timeline item.
 

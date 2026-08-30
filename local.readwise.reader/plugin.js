@@ -148,19 +148,6 @@ async function readerUpdate(documentId, changes) {
   );
 }
 
-async function readerDocumentById(documentId) {
-  const pairs = [
-    ["id", documentId],
-    ["withHtmlContent", normalizedChoice(content_detail) === "full article" ? "true" : "false"]
-  ];
-  const query = pairs.map(pair => `${encodeURIComponent(pair[0])}=${encodeURIComponent(pair[1])}`).join("&");
-  const response = await readerRequest(`${apiBase}?${query}`);
-  const page = parseDocumentResponse(response);
-  const document = page.results.find(result => result && result.id === documentId);
-  if (!document) throw new Error("Reader did not return the updated document.");
-  return document;
-}
-
 async function performReaderAction(actionId, actionValue, item) {
   if (enable_reader_actions !== "on") {
     throw new Error("Reader actions are disabled for this feed.");
@@ -178,11 +165,37 @@ async function performReaderAction(actionId, actionValue, item) {
   const changes = actionChanges(actionId);
   if (!changes) throw new Error(`Unknown Reader action: ${actionId}`);
   await readerUpdate(state.id, changes);
-  const document = await readerDocumentById(state.id);
 
-  item.annotations = documentAnnotations(document);
-  item.actions = readerActions(document.id, document.location, documentSeen(document));
+  const nextLocation = changes.location || state.location;
+  const nextSeen = typeof changes.seen === "boolean" ? changes.seen : Boolean(state.seen);
+  item.annotations = actionAnnotations(item.annotations, state.location, nextLocation, nextSeen);
+  item.actions = readerActions(state.id, nextLocation, nextSeen);
   return item;
+}
+
+function actionAnnotations(annotations, previousLocation, nextLocation, seen) {
+  const current = annotations ? Array.from(annotations) : [];
+  const first = current[0];
+  let details = first && first.text
+    ? String(first.text).split(" · ").filter(Boolean)
+    : [];
+
+  details = details.filter(detail => detail !== "Unseen in Reader");
+  if (!normalizedLocation() && previousLocation && nextLocation) {
+    const previousLabel = displayLocation(previousLocation);
+    const nextLabel = displayLocation(nextLocation);
+    const locationIndex = details.indexOf(previousLabel);
+    if (locationIndex >= 0) details[locationIndex] = nextLabel;
+  }
+  if (!seen) details.push("Unseen in Reader");
+
+  if (details.length > 0) {
+    current[0] = Annotation.createWithText(details.join(" · "));
+  }
+  else if (current.length > 0) {
+    current.shift();
+  }
+  return current.length > 0 ? current : undefined;
 }
 
 function actionChanges(actionId) {
@@ -277,7 +290,7 @@ function documentToItem(document, siteIcons) {
   const item = Item.createWithUriDate(uri, documentDate(document));
 
   if (document.title) item.title = document.title;
-  item.body = documentBody(document, originalUrl);
+  item.body = documentBody(document);
 
   const linkAttachment = documentLinkAttachment(document, originalUrl);
   if (linkAttachment) item.attachments = [linkAttachment];
@@ -475,7 +488,7 @@ function writeSiteIconCache(cache) {
   setItem(siteIconCacheKey, JSON.stringify(Object.fromEntries(entries)));
 }
 
-function documentBody(document, originalUrl) {
+function documentBody(document) {
   const wantsFullContent = normalizedChoice(content_detail) === "full article";
   let body = "";
 
@@ -491,10 +504,6 @@ function documentBody(document, originalUrl) {
 
   if (show_notes === "on" && document.notes) {
     body += `<blockquote><strong>Reader note:</strong> ${escapeHtml(document.notes)}</blockquote>`;
-  }
-
-  if (originalUrl) {
-    body += `<p><a href="${escapeAttribute(originalUrl)}">Open original</a></p>`;
   }
 
   return body;

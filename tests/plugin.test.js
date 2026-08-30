@@ -7,6 +7,10 @@ const source = fs.readFileSync(
   path.join(__dirname, "..", "local.readwise.reader", "plugin.js"),
   "utf8"
 );
+const actionDefinitions = JSON.parse(fs.readFileSync(
+  path.join(__dirname, "..", "local.readwise.reader", "actions.json"),
+  "utf8"
+));
 
 function makeContext(overrides = {}) {
   const state = new Map();
@@ -155,6 +159,7 @@ async function run() {
   assert.strictEqual(context.results[0].date.toISOString(), "2026-08-28T08:00:00.000Z");
   assert.match(context.results[0].body, /&lt;unsafe&gt;/);
   assert.doesNotMatch(context.results[0].body, /<unsafe>/);
+  assert.doesNotMatch(context.results[0].body, /Open original/);
   assert.match(context.results[0].annotations[0].text, /RSS/);
   assert.match(context.results[0].annotations[0].text, /42% read/);
   assert.match(context.results[0].annotations[0].text, /1,234 words/);
@@ -281,21 +286,64 @@ async function run() {
   const patchRequest = actionsContext._requests.find(request => request.method === "PATCH");
   assert.match(patchRequest.url, /\/api\/v3\/update\/doc-1\/$/);
   assert.deepStrictEqual(JSON.parse(patchRequest.parameters), { seen: true });
-  assert.match(actionsContext.lastRequest.url, /[?&]id=doc-1/);
+  assert.strictEqual(actionsContext.lastRequest.method, "PATCH");
   assert.ok(actionsContext.actionResult.actions.mark_unseen);
   assert.ok(!actionsContext.actionResult.actions.mark_seen);
   assert.doesNotMatch(actionsContext.actionResult.annotations[0].text, /Unseen in Reader/);
 
   vm.runInContext(
-    `performAction("move_feed", ${JSON.stringify(JSON.stringify({ id: "doc-1", location: "later", seen: true }))}, actionResult)`,
+    `performAction("mark_unseen", actionResult.actions.mark_unseen, actionResult)`,
     actionsContext
   );
   await settle();
   assert.ifError(actionsContext.actionError);
-  const latestPatch = actionsContext._requests.filter(request => request.method === "PATCH").pop();
-  assert.deepStrictEqual(JSON.parse(latestPatch.parameters), { location: "feed" });
-  assert.ok(!actionsContext.actionResult.actions.move_feed);
-  assert.ok(actionsContext.actionResult.actions.move_later);
+  assert.ok(actionsContext.actionResult.actions.mark_seen);
+  assert.match(actionsContext.actionResult.annotations[0].text, /Unseen in Reader/);
+
+  const moveSequence = [
+    ["move_later", "later"],
+    ["move_archive", "archive"],
+    ["move_inbox", "new"],
+    ["move_feed", "feed"]
+  ];
+  for (const [actionId, expectedLocation] of moveSequence) {
+    vm.runInContext(
+      `performAction(${JSON.stringify(actionId)}, actionResult.actions[${JSON.stringify(actionId)}], actionResult)`,
+      actionsContext
+    );
+    await settle();
+    assert.ifError(actionsContext.actionError);
+    assert.ok(!actionsContext.actionResult.actions[actionId]);
+    const actionState = JSON.parse(Object.values(actionsContext.actionResult.actions)[0]);
+    assert.strictEqual(actionState.location, expectedLocation);
+  }
+
+  const patchRequests = actionsContext._requests.filter(request => request.method === "PATCH");
+  assert.strictEqual(patchRequests.length, 6);
+  assert.deepStrictEqual(
+    patchRequests.map(request => JSON.parse(request.parameters)),
+    [{ seen: true }, { seen: false }, { location: "later" }, { location: "archive" }, { location: "new" }, { location: "feed" }]
+  );
+  assert.deepStrictEqual(
+    actionDefinitions.items.map(action => action.id).sort(),
+    ["mark_seen", "mark_unseen", "move_archive", "move_feed", "move_inbox", "move_later"].sort()
+  );
+
+  const allLocationActionsContext = makeContext({
+    reader_location: "All Locations",
+    enable_reader_actions: "on"
+  });
+  vm.runInContext("load()", allLocationActionsContext);
+  await settle();
+  assert.match(allLocationActionsContext.results[0].annotations[0].text, /Feed/);
+  vm.runInContext(
+    `performAction("move_later", results[0].actions.move_later, results[0])`,
+    allLocationActionsContext
+  );
+  await settle();
+  assert.ifError(allLocationActionsContext.actionError);
+  assert.match(allLocationActionsContext.actionResult.annotations[0].text, /Later/);
+  assert.doesNotMatch(allLocationActionsContext.actionResult.annotations[0].text, /Feed/);
 
   const pageCalls = [];
   const paginationContext = makeContext({
@@ -364,12 +412,14 @@ async function run() {
       body: JSON.stringify({ detail: "Unsupported location." })
     })
   });
+  badRequestContext.unchangedActions = { move_feed: "unchanged" };
   vm.runInContext(
-    `performAction("move_feed", ${JSON.stringify(JSON.stringify({ id: "doc-1", location: "later", seen: false }))}, {})`,
+    `performAction("move_feed", ${JSON.stringify(JSON.stringify({ id: "doc-1", location: "later", seen: false }))}, ({ actions: unchangedActions }))`,
     badRequestContext
   );
   await settle();
   assert.match(badRequestContext.actionError.message, /Unsupported location/);
+  assert.strictEqual(badRequestContext.unchangedActions.move_feed, "unchanged");
 
   const missingToken = makeContext({ api_token: "" });
   vm.runInContext("verify()", missingToken);
